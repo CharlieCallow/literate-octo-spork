@@ -18,6 +18,7 @@ build/
 
 reports/*
 !reports/.gitkeep
+smoke-out/
 team/temp/*
 !team/temp/.gitkeep
 team/archive/*
