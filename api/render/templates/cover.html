@@ -1,0 +1,15 @@
+<section class="cover">
+  <img class="logo" src="{{ logo_path }}" alt="Forte Research">
+  <h1>{{ title }}</h1>
+  <p class="subtitle">{{ subtitle }}</p>
+  <div class="rule"></div>
+
+  <div class="meta">
+    <div class="contributors">
+      {% for c in contributors %}
+        <div><strong>{{ c.name }}</strong> &middot; {{ c.role }}</div>
+      {% endfor %}
+    </div>
+    <div>{{ date }} &middot; Read time ~{{ read_minutes }} min &middot; Confidential</div>
+  </div>
+</section>

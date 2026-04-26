@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{ title }}</title>
+  <link rel="stylesheet" href="{{ css_path }}">
+</head>
+<body>
+
+<div class="running-logo">
+  <img src="{{ logo_path }}" alt="">
+</div>
+
+{% include "cover.html" %}
+
+<div class="doctitle" style="display:none">{{ title }}</div>
+<div class="docdate" style="display:none">{{ date }}</div>
+
+{% if house_view_top %}
+<div class="callout callout--house">
+  <span class="label">House view.</span> {{ house_view_top }}
+</div>
+{% endif %}
+
+{% for section in sections %}
+  <h2>{{ section.heading }}</h2>
+  {% if section.author %}
+  <p class="byline">By <span class="name">{{ section.author }}</span>{% if section.role %} — {{ section.role }}{% endif %}</p>
+  {% endif %}
+  {{ section.body_html | safe }}
+{% endfor %}
+
+{% if house_view_bottom %}
+<div class="callout callout--house">
+  <span class="label">Bottom line.</span> {{ house_view_bottom }}
+</div>
+{% endif %}
+
+{% include "disclosures.html" %}
+
+</body>
+</html>
