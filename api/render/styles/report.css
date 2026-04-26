@@ -38,6 +38,8 @@
   @bottom-left { content: none; } @bottom-center { content: none; } @bottom-right { content: none; }
 }
 
+* { box-sizing: border-box; }
+
 html, body {
   font-family: "Inter", "Source Sans Pro", "Helvetica Neue", Arial, sans-serif;
   font-size: 11pt;
@@ -45,44 +47,48 @@ html, body {
   color: var(--forte-ink);
   background: var(--forte-paper);
   hyphens: auto;
+  margin: 0; padding: 0;
 }
 
 /* ---- cover ---- */
 .cover {
   page: cover;
-  height: 297mm; width: 210mm;
-  padding: 25mm 22mm;
-  position: relative;
   page-break-after: always;
   background: var(--forte-paper);
+  display: flex;
+  flex-direction: column;
+  height: 297mm;
+  padding: 25mm 22mm;
 }
-.cover .logo { width: 70mm; }
+.cover .logo { width: 64mm; max-width: 100%; }
 .cover h1 {
-  margin-top: 60mm;
-  font-size: 36pt;
+  margin: 50mm 0 0;
+  font-size: 30pt;
   line-height: 1.1;
   color: var(--forte-navy);
   font-weight: 700;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
 }
 .cover .subtitle {
-  font-size: 14pt;
+  font-size: 13pt;
   color: var(--forte-muted);
   margin-top: 6mm;
   line-height: 1.35;
 }
-.cover .meta {
-  position: absolute;
-  bottom: 25mm; left: 22mm; right: 22mm;
-  font-size: 10pt;
-  color: var(--forte-muted);
-}
-.cover .meta .contributors { color: var(--forte-ink); margin-bottom: 4mm; }
-.cover .meta .contributors strong { color: var(--forte-navy); }
 .cover .rule {
   height: 2px; width: 30mm;
   background: var(--forte-teal);
-  margin-top: 10mm; margin-bottom: 8mm;
+  margin: 10mm 0 0;
 }
+.cover .spacer { flex: 1; }
+.cover .meta {
+  font-size: 10pt;
+  color: var(--forte-muted);
+  margin-top: 10mm;
+}
+.cover .meta .contributors { color: var(--forte-ink); margin-bottom: 4mm; }
+.cover .meta .contributors strong { color: var(--forte-navy); }
 
 /* ---- header logo running element ---- */
 .running-logo { position: running(headerlogo); }

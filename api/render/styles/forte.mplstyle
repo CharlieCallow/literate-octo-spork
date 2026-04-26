@@ -9,7 +9,7 @@ axes.titlesize:        14
 axes.titleweight:      bold
 axes.titlelocation:    left
 axes.titlecolor:       "#1F1B4D"
-axes.titlepad:         12
+axes.titlepad:         28
 
 axes.labelsize:        10
 axes.labelcolor:       "#1A1A1A"

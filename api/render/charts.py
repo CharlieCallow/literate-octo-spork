@@ -65,10 +65,7 @@ def line_chart(
         _label_last(ax, df[col], color)
 
     ax.set_title(title, loc="left")
-    ax.text(
-        0.0, 1.02, subtitle,
-        transform=ax.transAxes, fontsize=11, color=MUTED, ha="left", va="bottom",
-    )
+    ax.text(0.0, 1.04, subtitle, transform=ax.transAxes, fontsize=11, color=MUTED, ha="left", va="bottom")
     if y_label:
         ax.set_ylabel(y_label)
     if len(df.columns) > 4:
@@ -98,7 +95,7 @@ def bar_chart(
     else:
         ax.bar(series.index.astype(str), series.values, color=NAVY)
     ax.set_title(title, loc="left")
-    ax.text(0.0, 1.02, subtitle, transform=ax.transAxes, fontsize=11, color=MUTED, ha="left", va="bottom")
+    ax.text(0.0, 1.04, subtitle, transform=ax.transAxes, fontsize=11, color=MUTED, ha="left", va="bottom")
     _annotate_source(ax, source, as_of)
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -127,7 +124,7 @@ def regime_chart(
     for start, end in shaded:
         ax.axvspan(pd.to_datetime(start), pd.to_datetime(end), color="#E8E8EE", alpha=0.6, lw=0)
     ax.set_title(title, loc="left")
-    ax.text(0.0, 1.02, subtitle, transform=ax.transAxes, fontsize=11, color=MUTED, ha="left", va="bottom")
+    ax.text(0.0, 1.04, subtitle, transform=ax.transAxes, fontsize=11, color=MUTED, ha="left", va="bottom")
     if len(df.columns) > 4:
         ax.legend(loc="best")
     _annotate_source(ax, source, as_of)
