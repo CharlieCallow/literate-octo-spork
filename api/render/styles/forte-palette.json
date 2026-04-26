@@ -1,0 +1,33 @@
+{
+  "_comment": "Single source of truth for Forte brand colours. Extracted from assets/Fortesecurities_V2-1024x476.png and the Hillgate template. CSS, matplotlib, and Jinja all read from here.",
+  "brand": {
+    "navy": "#1F1B4D",
+    "navy_deep": "#0F0B2D",
+    "purple": "#302070",
+    "teal": "#5BC0BE",
+    "teal_deep": "#3DA8A6",
+    "teal_muted": "#5A8DA6",
+    "teal_light": "#82DDD9",
+    "black": "#0A0A14"
+  },
+  "ink": {
+    "paper": "#FFFFFF",
+    "body": "#1A1A1A",
+    "muted": "#6B6B7A",
+    "rule": "#E8E8EE"
+  },
+  "callouts": {
+    "confirmation": { "border": "#1E7A5A", "fill": "#E8F4EE" },
+    "information":  { "border": "#1F1B4D", "fill": "#EEEEF6" },
+    "caution":      { "border": "#B8860B", "fill": "#FFF8E1" },
+    "house_view":   { "border": "#1F1B4D", "fill": "#1F1B4D", "text": "#FFFFFF" }
+  },
+  "chart_cycle": [
+    "#1F1B4D",
+    "#5BC0BE",
+    "#302070",
+    "#5A8DA6",
+    "#82DDD9",
+    "#3DA8A6"
+  ]
+}
