@@ -1,10 +1,15 @@
 "use client";
 import { memo, use, useEffect, useState } from "react";
 import { AuthGate } from "@/components/Auth";
+import { RunStatus } from "@/components/RunStatus";
 import { StageBreakdown } from "@/components/StageBreakdown";
-import { api, type Job, type Report } from "@/lib/api";
+import { api, type Job, type Report, type ReportStage } from "@/lib/api";
 
-const TERMINAL_STAGES = new Set(["done", "failed"]);
+const TERMINAL_STAGES = new Set(["done", "failed", "cancelled"]);
+
+const RESUME_FROM_STAGES: ReportStage[] = [
+  "brief", "recruit", "research", "charts", "draft", "edit", "render", "feedback",
+];
 
 export default function ReportPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -36,9 +41,15 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reportId]);
 
-  async function resume() {
+  async function resume(fromStage?: ReportStage) {
     if (!report) return;
-    try { await api.resume(report.id); } catch (e) { setError(String(e)); }
+    try { await api.resume(report.id, fromStage); } catch (e) { setError(String(e)); }
+  }
+
+  async function cancel() {
+    if (!report) return;
+    if (!window.confirm("Cancel this report? Any in-flight stage will finish; nothing further runs.")) return;
+    try { await api.cancel(report.id); } catch (e) { setError(String(e)); }
   }
 
   return (
@@ -60,16 +71,43 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
             <p style={{ margin: 0 }}>
               Stage: <span className={`stage-pill ${report.stage}`}>{report.stage}</span>
               {" · "}Mode: <span className="stage-pill">{report.mode}</span>
-              {" · "}Cost: ${report.cost_usd.toFixed(3)}
               {report.budget_cap_usd && <> {" · "}Cap: ${report.budget_cap_usd.toFixed(2)}</>}
               {report.team_override.length > 0 && <> {" · "}Team: {report.team_override.join(", ")}</>}
-              {report.stage === "failed" && (
+            </p>
+            <p style={{ margin: "6px 0 0" }}>
+              <RunStatus report={report} />
+            </p>
+
+            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {!TERMINAL_STAGES.has(report.stage) && (
+                <button onClick={cancel} style={{ padding: "3px 12px", fontSize: 12, background: "#FFF", color: "var(--forte-ink)", border: "1px solid var(--forte-rule)" }}>
+                  Cancel
+                </button>
+              )}
+              {(report.stage === "failed" || report.stage === "cancelled") && (
                 <>
-                  {" · "}
-                  <button onClick={resume} style={{ padding: "2px 10px", fontSize: 12 }}>Resume</button>
+                  <button onClick={() => resume()} style={{ padding: "3px 12px", fontSize: 12 }}>
+                    Resume
+                  </button>
+                  <details style={{ display: "inline-block" }}>
+                    <summary style={{ cursor: "pointer", fontSize: 12, color: "var(--forte-purple)" }}>
+                      Re-run from…
+                    </summary>
+                    <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+                      {RESUME_FROM_STAGES.map((s) => (
+                        <button
+                          key={s}
+                          onClick={() => resume(s)}
+                          style={{ padding: "2px 8px", fontSize: 11, background: "#FFF", color: "var(--forte-ink)", border: "1px solid var(--forte-rule)" }}
+                        >
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  </details>
                 </>
               )}
-            </p>
+            </div>
 
             {report.error && (
               <pre style={{

@@ -1,9 +1,10 @@
 "use client";
 import { memo, useEffect, useState } from "react";
 import { api, type Job, type Report } from "@/lib/api";
+import { RunStatus } from "./RunStatus";
 import { StageBreakdown } from "./StageBreakdown";
 
-const TERMINAL_STAGES = new Set(["done", "failed"]);
+const TERMINAL_STAGES = new Set(["done", "failed", "cancelled"]);
 
 export function LatestReport() {
   const [report, setReport] = useState<Report | null>(null);
@@ -62,7 +63,9 @@ export function LatestReport() {
       <p className="muted" style={{ marginTop: 0 }}>
         Stage: <span className={`stage-pill ${report.stage}`}>{report.stage}</span>
         {" · "}Mode: <span className="stage-pill">{report.mode}</span>
-        {" · "}Cost: ${report.cost_usd.toFixed(3)}
+      </p>
+      <p className="muted" style={{ margin: "4px 0 0" }}>
+        <RunStatus report={report} />
         {report.stage === "failed" && (
           <>
             {" · "}

@@ -1,10 +1,18 @@
 // Tiny client for the Forte backend. Sends HTTP basic auth from localStorage.
 
 export type ReportStage =
-  | "queued" | "brief" | "research" | "charts" | "draft"
-  | "edit" | "render" | "feedback" | "done" | "failed";
+  | "queued" | "brief" | "recruit" | "research" | "charts" | "draft"
+  | "edit" | "render" | "feedback" | "done" | "failed" | "cancelled";
 
 export type ReportMode = "fast" | "standard" | "deep";
+
+// Rough estimates used for the confirm dialog and on-screen ETA. Tuned against
+// real reports; treat as "expected" not guaranteed.
+export const MODE_ESTIMATES: Record<ReportMode, { cost_lo: number; cost_hi: number; minutes: number }> = {
+  fast:     { cost_lo: 0.05, cost_hi: 0.15, minutes: 2 },
+  standard: { cost_lo: 0.50, cost_hi: 1.00, minutes: 6 },
+  deep:     { cost_lo: 1.50, cost_hi: 3.00, minutes: 12 },
+};
 
 export interface Report {
   id: number;
@@ -17,6 +25,7 @@ export interface Report {
   error: string | null;
   cost_usd: number;
   pdf_url: string | null;
+  created_at: string;
 }
 
 export interface TeamMember {
@@ -146,8 +155,11 @@ export const api = {
     req<Recommendation>(`/recruiter/recommendations/${id}/dismiss`, { method: "POST" }),
   createReport: (p: CreateReportPayload) =>
     req<Report>("/reports", { method: "POST", body: JSON.stringify(p) }),
-  resume: (id: number) =>
-    req<Report>(`/reports/${id}/resume`, { method: "POST" }),
+  resume: (id: number, fromStage?: ReportStage) => {
+    const qs = fromStage ? `?from_stage=${fromStage}` : "";
+    return req<Report>(`/reports/${id}/resume${qs}`, { method: "POST" });
+  },
+  cancel: (id: number) => req<Report>(`/reports/${id}/cancel`, { method: "POST" }),
   pdfUrl: (id: number) => `${API_BASE}/reports/${id}/pdf`,
 
   // Scout

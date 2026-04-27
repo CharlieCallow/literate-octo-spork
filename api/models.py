@@ -26,6 +26,7 @@ class ReportStage(str, Enum):
     feedback = "feedback"
     done = "done"
     failed = "failed"
+    cancelled = "cancelled"
 
 
 class ReportMode(str, Enum):

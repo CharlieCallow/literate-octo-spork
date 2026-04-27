@@ -36,6 +36,7 @@ class ReportOut(BaseModel):
     error: str | None
     cost_usd: float
     pdf_url: str | None
+    created_at: datetime
 
     @classmethod
     def from_db(cls, r: Report) -> ReportOut:
@@ -50,6 +51,7 @@ class ReportOut(BaseModel):
             error=r.error,
             cost_usd=r.cost_usd,
             pdf_url=f"/reports/{r.id}/pdf" if r.pdf_path else None,
+            created_at=r.created_at,
         )
 
 
@@ -145,25 +147,64 @@ def list_jobs(report_id: int, session: Session = Depends(get_session)) -> list[J
 
 
 @router.post("/{report_id}/resume", response_model=ReportOut, dependencies=[Depends(require_auth)])
-def resume(report_id: int, session: Session = Depends(get_session)) -> ReportOut:
-    """Re-queue a failed report from its last attempted stage. Workflow stages
-    are idempotent so this safely overwrites prior outputs without corruption."""
+def resume(
+    report_id: int,
+    from_stage: ReportStage | None = None,
+    session: Session = Depends(get_session),
+) -> ReportOut:
+    """Re-queue a failed or cancelled report. By default resumes from the last
+    attempted stage; pass ?from_stage=research (or any earlier stage) to redo
+    work from there. Workflow stages are idempotent."""
     report = session.get(Report, report_id)
     if not report:
         raise HTTPException(404, "Report not found")
-    if report.stage != ReportStage.failed:
-        raise HTTPException(400, f"Report is not failed (stage={report.stage})")
+    if report.stage not in (ReportStage.failed, ReportStage.cancelled):
+        raise HTTPException(400, f"Report is not failed/cancelled (stage={report.stage})")
 
-    # Last attempted stage is whatever the most recent job ran.
-    last_job = session.exec(
-        select(Job).where(Job.report_id == report_id).order_by(Job.created_at.desc())  # type: ignore[attr-defined]
-    ).first()
-    resume_stage = last_job.stage if last_job else ReportStage.brief
+    if from_stage is not None:
+        if from_stage in (ReportStage.queued, ReportStage.done, ReportStage.failed, ReportStage.cancelled):
+            raise HTTPException(400, f"from_stage must be a workflow stage, not {from_stage}")
+        resume_stage: ReportStage = from_stage
+    else:
+        last_job = session.exec(
+            select(Job).where(Job.report_id == report_id).order_by(Job.created_at.desc())  # type: ignore[attr-defined]
+        ).first()
+        resume_stage = last_job.stage if last_job else ReportStage.brief
 
     report.stage = resume_stage
     report.error = None
     session.add(report)
     session.add(Job(report_id=report_id, stage=resume_stage))
+    session.commit()
+    session.refresh(report)
+    return ReportOut.from_db(report)
+
+
+@router.post("/{report_id}/cancel", response_model=ReportOut, dependencies=[Depends(require_auth)])
+def cancel(report_id: int, session: Session = Depends(get_session)) -> ReportOut:
+    """Mark a running report as cancelled. The worker checks this flag before
+    claiming the next stage; an in-flight stage will finish but no further
+    stages will run."""
+    report = session.get(Report, report_id)
+    if not report:
+        raise HTTPException(404, "Report not found")
+    if report.stage in (ReportStage.done, ReportStage.failed, ReportStage.cancelled):
+        raise HTTPException(400, f"Report is already {report.stage}")
+
+    report.stage = ReportStage.cancelled
+    report.error = "Cancelled by user"
+    session.add(report)
+
+    # Drop any pending jobs for this report so the worker doesn't pick them up.
+    pending = session.exec(
+        select(Job).where(Job.report_id == report_id, Job.status == "pending")
+    ).all()
+    for j in pending:
+        j.status = "failed"
+        j.last_error = "Cancelled by user"
+        j.finished_at = datetime.now()
+        session.add(j)
+
     session.commit()
     session.refresh(report)
     return ReportOut.from_db(report)

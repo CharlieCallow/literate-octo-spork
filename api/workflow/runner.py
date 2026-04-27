@@ -48,6 +48,9 @@ def execute(job: Job) -> None:
         if not report:
             _fail_job(session, job, "Report missing")
             return
+        if report.stage == ReportStage.cancelled:
+            _fail_job(session, job, "Report cancelled")
+            return
         report.stage = job.stage
         report.error = None  # clear previous failure on retry
         session.add(report)

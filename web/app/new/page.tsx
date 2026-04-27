@@ -1,13 +1,15 @@
 "use client";
 import { useEffect, useState } from "react";
 import { AuthGate } from "@/components/Auth";
-import { api, type ReportMode, type TeamMember } from "@/lib/api";
+import { api, MODE_ESTIMATES, type ReportMode, type TeamMember } from "@/lib/api";
 
 const MODES: { value: ReportMode; title: string; tagline: string }[] = [
   { value: "fast",     title: "Fast (testing)",  tagline: "Haiku end-to-end. No web search. Tight loop. ~$0.05-0.15." },
   { value: "standard", title: "Standard",        tagline: "Opus EIC + Sonnet team. Web search on. ~$0.50-1.00." },
   { value: "deep",     title: "Deep dive",       tagline: "Same models as standard, larger token + iter budget. ~$1.50-3.00." },
 ];
+
+const CONFIRM_THRESHOLD_USD = 0.50;
 
 export default function NewReportPage() {
   const [theme, setTheme] = useState("");
@@ -34,6 +36,21 @@ export default function NewReportPage() {
       if (budget_cap_usd !== null && (Number.isNaN(budget_cap_usd) || budget_cap_usd <= 0)) {
         throw new Error("Budget must be a positive number");
       }
+      const est = MODE_ESTIMATES[mode];
+      const cap = budget_cap_usd ?? est.cost_hi;
+      if (cap >= CONFIRM_THRESHOLD_USD) {
+        const ok = window.confirm(
+          `Commission "${theme}" in ${mode} mode?\n\n` +
+          `Estimated cost: $${est.cost_lo.toFixed(2)}-$${est.cost_hi.toFixed(2)}\n` +
+          `Budget cap: $${cap.toFixed(2)}\n` +
+          `Estimated runtime: ~${est.minutes} min\n\n` +
+          `Click OK to charge it; Cancel to back out.`
+        );
+        if (!ok) {
+          setBusy(false);
+          return;
+        }
+      }
       const r = await api.createReport({
         theme,
         subtitle: subtitle || undefined,
@@ -41,7 +58,7 @@ export default function NewReportPage() {
         team_override: pickedSlugs,
         budget_cap_usd,
       });
-      window.location.href = `/?just=${r.id}`;
+      window.location.href = `/reports/${r.id}`;
     } catch (e) {
       setError(String(e));
     } finally {
