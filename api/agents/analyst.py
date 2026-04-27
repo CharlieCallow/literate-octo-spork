@@ -6,7 +6,13 @@ from pathlib import Path
 
 from api.agents.base import Agent, AgentResult, Tool
 from api.agents.cost import CostTracker
-from api.agents.tools import fred_series_tool
+from api.agents.tools import (
+    edgar_filings_tool,
+    fred_series_tool,
+    web_search_tool,
+    wikipedia_tool,
+    yfinance_history_tool,
+)
 from api.settings import settings
 
 
@@ -35,13 +41,31 @@ BRIEF:
 
 THEME: {theme}
 
-Run your research. Use the fred_series tool to pull any macro time series you need. Write structured notes in markdown — claims with evidence and sources. Be opinionated; the report has a take, hedging without conviction is the failure mode. Output ~300-500 words.
+Run your research. Available tools:
+- `fred_series` — macro time series (rates, CPI, employment, etc.)
+- `yfinance_history` — equity / ETF / FX / crypto / futures price history
+- `wikipedia_summary` — definitional and background context
+- `edgar_filings` — list recent SEC filings for a ticker
+- `web_search` — current news, headlines, broker notes (Anthropic-managed)
+
+Use whichever tools fit your beat. Stay in your voice. Write structured notes in markdown -- claims with evidence and sources. Be opinionated; hedging without conviction is the failure mode. Output ~300-500 words.
 """
-        tools: list[Tool] = [fred_series_tool()]
-        return self.run(prompt, tools=tools, max_tokens=2048)
+        tools: list[Tool] = [
+            fred_series_tool(),
+            yfinance_history_tool(),
+            wikipedia_tool(),
+            edgar_filings_tool(),
+        ]
+        return self.run(
+            prompt,
+            tools=tools,
+            server_tools=[web_search_tool()],
+            max_tokens=3072,
+            max_iters=10,
+        )
 
     def draft(self, brief: str, notes: str, theme: str) -> AgentResult:
-        prompt = f"""Draft your section of the report based on the notes below. Stay in your voice (the persona file is your identity). The Editor will preserve voice when editing — write in the voice you actually want to read.
+        prompt = f"""Draft your section of the report based on the notes below. Stay in your voice (the persona file is your identity). The Editor will preserve voice when editing -- write in the voice you actually want to read.
 
 BRIEF:
 
@@ -51,6 +75,6 @@ YOUR NOTES:
 
 {notes}
 
-Output a single section in markdown. Start with a brief inline header (## <Section heading>). 200-400 words. Reference charts inline as `[chart: <filename>]` if you want one rendered (Data & Charts will produce them). Do not invent data — only use figures from your notes or charts you've explicitly requested.
+Output a single section in markdown. Start with a brief inline header (## <Section heading>). 200-400 words. Reference charts inline as `[chart: <filename>]` if you want one rendered (Data & Charts will produce them). Do not invent data -- only use figures from your notes.
 """
         return self.run(prompt, max_tokens=2048)

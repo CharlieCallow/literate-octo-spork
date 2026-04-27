@@ -38,6 +38,13 @@ SUBTITLE: {subtitle or "(propose one)"}
 AVAILABLE CONTRIBUTORS:
 {roster_blob}
 
+DATA SOURCES THE TEAM CAN PULL FROM:
+- FRED -- macro: rates, CPI, unemployment, GDP, money supply, etc.
+- yfinance -- equities, ETFs, FX, commodity futures, crypto. Tickers like 'AAPL', 'SPY', '^VIX', 'BTC-USD', 'CL=F'.
+- SEC EDGAR -- 10-K / 10-Q / 8-K filings for any US-listed ticker.
+- Wikipedia -- definitional and background content.
+- Web search -- current news, headlines, broker notes.
+
 Output the brief in markdown using EXACTLY these literal section headings (they're parsed by the workflow):
 
 # ANGLE

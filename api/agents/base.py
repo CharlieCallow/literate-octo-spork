@@ -77,13 +77,18 @@ class Agent:
         user_prompt: str,
         *,
         tools: list[Tool] | None = None,
+        server_tools: list[dict[str, Any]] | None = None,
         extra_system: str = "",
         max_iters: int = 6,
         max_tokens: int = 4096,
     ) -> AgentResult:
+        # Local tools have a Python callable we resolve by name; server tools
+        # (e.g. Anthropic's web_search_20250305) are executed by the API and
+        # the result comes back inline -- we just pass the config through.
         tools = tools or []
+        server_tools = server_tools or []
         tool_map = {t.name: t for t in tools}
-        anth_tools = [t.to_anthropic() for t in tools] or None
+        anth_tools: list[dict[str, Any]] = [t.to_anthropic() for t in tools] + list(server_tools)
 
         messages: list[dict[str, Any]] = [{"role": "user", "content": user_prompt}]
         transcript: list[dict[str, Any]] = []
