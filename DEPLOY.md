@@ -116,6 +116,21 @@ in `DASHBOARD_PASSWORD_HASH`. Commission a fast-mode report and watch it land.
 - [ ] `/inbox` runs the Scout (web search costs ~$0.05).
 - [ ] `/team` shows recommendations after a few reports finish.
 
+## Heads-up: ephemeral filesystem
+
+Railway containers are rebuilt from git on every deploy. The `team/` and
+`reports/` directories on disk **don't survive a rebuild** -- meaning:
+
+- **Promoted personas** (`team/<slug>.md` written by the Recruiter) disappear on
+  the next deploy. Same for fired-analyst archives.
+- **Past report PDFs** still have DB rows but the files on disk are gone.
+
+Postgres data is fine -- it's on a managed volume.
+
+A persistent fix is on the M5 backlog (move personas into Postgres and PDFs into
+R2). Until then, treat any persona promotion as "good for this container's
+lifetime" and re-promote after rebuilds.
+
 ## Costs
 
 | Service | Tier | Notes |

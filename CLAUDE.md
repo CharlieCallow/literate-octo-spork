@@ -26,8 +26,20 @@ Read [PROJECT.md](./PROJECT.md) at the start of every session before writing or 
 
 ## Polish backlog (when time)
 
+- **Persistent team/ + reports/ on Railway (top priority).** Promoted personas
+  and firings vanish on every redeploy because `team/` and `reports/` are part
+  of the container filesystem, not a persistent volume. Two viable fixes:
+  (a) Railway volume mount on those paths plus a `_seed_team()` startup hook
+  that hydrates from a baked `_team_seed/` copy when the volume is empty, or
+  (b) move personas into a `personas` Postgres table and treat `team/*.md` as
+  a write-through cache. (b) is the cleaner long-run answer and matches the
+  spec's "manual edit from the dashboard, takes effect immediately" idea.
+  Same problem for `reports/<id>/`: pair this fix with M5 R2 storage so PDFs
+  + chart PNGs land in object storage and survive rebuilds.
 - Running-report card: show elapsed time + estimated time-to-finish + estimated cost
+  *(done)*
 - Use the cost estimate to surface a confirm dialog before a report kicks off
+  *(done)*
 - Bump Next.js past 15.0.x for the security CVE flagged at deploy time
 
 ## Session log
