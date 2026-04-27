@@ -4,10 +4,13 @@ export type ReportStage =
   | "queued" | "brief" | "research" | "charts" | "draft"
   | "edit" | "render" | "feedback" | "done" | "failed";
 
+export type ReportMode = "fast" | "standard";
+
 export interface Report {
   id: number;
   theme: string;
   subtitle: string | null;
+  mode: ReportMode;
   stage: ReportStage;
   error: string | null;
   cost_usd: number;
@@ -52,8 +55,8 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
 export const api = {
   listReports: () => req<Report[]>("/reports"),
   getReport: (id: number) => req<Report>(`/reports/${id}`),
-  createReport: (theme: string, subtitle?: string) =>
-    req<Report>("/reports", { method: "POST", body: JSON.stringify({ theme, subtitle }) }),
+  createReport: (theme: string, subtitle?: string, mode: ReportMode = "standard") =>
+    req<Report>("/reports", { method: "POST", body: JSON.stringify({ theme, subtitle, mode }) }),
   pdfUrl: (id: number) => `${API_BASE}/reports/${id}/pdf`,
   apiBase: () => API_BASE,
 };

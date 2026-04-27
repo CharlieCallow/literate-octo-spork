@@ -33,6 +33,7 @@ export function ReportList() {
         <h2>{latest.theme}</h2>
         <p className="muted">
           Stage: <span className={`stage-pill ${latest.stage}`}>{latest.stage}</span>
+          {" · "}Mode: <span className="stage-pill">{latest.mode}</span>
           {" · "}Cost: ${latest.cost_usd.toFixed(3)}
         </p>
         {latest.error && <pre style={{ whiteSpace: "pre-wrap", color: "#B8860B", fontSize: 12 }}>{latest.error}</pre>}

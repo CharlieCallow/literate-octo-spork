@@ -15,7 +15,7 @@ from api.agents.charts import DataAndCharts
 from api.agents.cost import CostTracker
 from api.agents.editor import EditorInChief
 from api.db import engine
-from api.models import AuditLog, Report, ReportStage
+from api.models import AuditLog, Report, ReportMode, ReportStage
 from api.render.pdf import Contributor, Section, render_pdf
 from api.settings import settings
 from api.workflow.audit import audit_hook
@@ -94,8 +94,21 @@ def _next_stage(stage: ReportStage) -> ReportStage:
     return STAGE_ORDER[i + 1]
 
 
-def _make_analyst(slug: str, cost: CostTracker, audit) -> Analyst:  # type: ignore[no-untyped-def]
-    return Analyst(f"{slug}.md", cost, audit=audit)
+def _models_for(mode: ReportMode) -> dict[str, str]:
+    """Pick model IDs per stage based on report mode.
+    `fast` runs Haiku end-to-end (testing); `standard` uses Opus EIC + Sonnet."""
+    if mode == ReportMode.fast:
+        m = settings.model_haiku
+        return {"editor": m, "analyst": m, "data": m}
+    return {
+        "editor": settings.model_opus,
+        "analyst": settings.model_sonnet,
+        "data": settings.model_sonnet,
+    }
+
+
+def _make_analyst(slug: str, cost: CostTracker, audit, model: str) -> Analyst:  # type: ignore[no-untyped-def]
+    return Analyst(f"{slug}.md", cost, audit=audit, model=model)
 
 
 def _resolved_contributors(brief: str) -> list[dict[str, str]]:
@@ -115,9 +128,11 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
     wd = working_dir(report.id)
     audit = audit_hook(report.id)
     cost = _tracker()
+    models = _models_for(report.mode)
+    is_fast = report.mode == ReportMode.fast
 
     if stage == ReportStage.brief:
-        eic = EditorInChief(cost, audit=audit)
+        eic = EditorInChief(cost, audit=audit, model=models["editor"])
         result = eic.write_brief(
             report.theme,
             subtitle=report.subtitle,
@@ -140,17 +155,17 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         brief = _read(wd / "brief.md")
         contributors = _resolved_contributors(brief)
         for c in contributors:
-            analyst = _make_analyst(c["slug"], cost, audit)
-            result = analyst.research(brief, report.theme, wd)
+            analyst = _make_analyst(c["slug"], cost, audit, models["analyst"])
+            result = analyst.research(brief, report.theme, wd, fast=is_fast)
             _write(wd / f"notes-{c['slug']}.md", result.text)
             _persist_cost(report.id, result.cost_usd)
         return _next_stage(stage)
 
     if stage == ReportStage.charts:
-        dc = DataAndCharts(cost, audit=audit)
+        dc = DataAndCharts(cost, audit=audit, model=models["data"])
         brief = _read(wd / "brief.md")
         all_notes = _concat_notes(wd, _resolved_contributors(brief))
-        result = dc.build(brief, all_notes, wd / "charts")
+        result = dc.build(brief, all_notes, wd / "charts", fast=is_fast)
         _write(wd / "data-section.md", result.text)
         _persist_cost(report.id, result.cost_usd)
         return _next_stage(stage)
@@ -159,7 +174,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         brief = _read(wd / "brief.md")
         contributors = _resolved_contributors(brief)
         for c in contributors:
-            analyst = _make_analyst(c["slug"], cost, audit)
+            analyst = _make_analyst(c["slug"], cost, audit, models["analyst"])
             notes = _read(wd / f"notes-{c['slug']}.md")
             result = analyst.draft(brief, notes, report.theme)
             _write(wd / f"section-{c['slug']}.md", result.text)
@@ -167,7 +182,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         return _next_stage(stage)
 
     if stage == ReportStage.edit:
-        eic = EditorInChief(cost, audit=audit)
+        eic = EditorInChief(cost, audit=audit, model=models["editor"])
         brief = _read(wd / "brief.md")
         contributors = _resolved_contributors(brief)
         sections: list[dict[str, str]] = []

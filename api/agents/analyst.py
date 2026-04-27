@@ -32,7 +32,7 @@ class Analyst(Agent):
             **kwargs,  # type: ignore[arg-type]
         )
 
-    def research(self, brief: str, theme: str, working_dir: Path) -> AgentResult:
+    def research(self, brief: str, theme: str, working_dir: Path, *, fast: bool = False) -> AgentResult:
         prompt = f"""You're a contributing analyst on a Forte Research report. The Editor-in-Chief's brief is below.
 
 BRIEF:
@@ -56,12 +56,14 @@ Use whichever tools fit your beat. Stay in your voice. Write structured notes in
             wikipedia_tool(),
             edgar_filings_tool(),
         ]
+        # Fast mode: drop web search (biggest cost driver) and tighten the loop.
+        server_tools = [] if fast else [web_search_tool()]
         return self.run(
             prompt,
             tools=tools,
-            server_tools=[web_search_tool()],
-            max_tokens=3072,
-            max_iters=6,
+            server_tools=server_tools,
+            max_tokens=2048 if fast else 3072,
+            max_iters=4 if fast else 6,
         )
 
     def draft(self, brief: str, notes: str, theme: str) -> AgentResult:

@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 
 from api.auth import require_auth
 from api.db import get_session
-from api.models import Job, Report, ReportStage
+from api.models import Job, Report, ReportMode, ReportStage
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -19,12 +19,14 @@ router = APIRouter(prefix="/reports", tags=["reports"])
 class CreateReport(BaseModel):
     theme: str
     subtitle: str | None = None
+    mode: ReportMode = ReportMode.standard
 
 
 class ReportOut(BaseModel):
     id: int
     theme: str
     subtitle: str | None
+    mode: ReportMode
     stage: ReportStage
     error: str | None
     cost_usd: float
@@ -36,6 +38,7 @@ class ReportOut(BaseModel):
             id=r.id or 0,
             theme=r.theme,
             subtitle=r.subtitle,
+            mode=r.mode,
             stage=r.stage,
             error=r.error,
             cost_usd=r.cost_usd,
@@ -45,7 +48,7 @@ class ReportOut(BaseModel):
 
 @router.post("", response_model=ReportOut, dependencies=[Depends(require_auth)])
 def create(payload: CreateReport, session: Session = Depends(get_session)) -> ReportOut:
-    report = Report(theme=payload.theme, subtitle=payload.subtitle)
+    report = Report(theme=payload.theme, subtitle=payload.subtitle, mode=payload.mode)
     session.add(report)
     session.commit()
     session.refresh(report)

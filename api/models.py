@@ -27,12 +27,18 @@ class ReportStage(str, Enum):
     failed = "failed"
 
 
+class ReportMode(str, Enum):
+    fast = "fast"          # Haiku-only, no web search, tight iters -- testing
+    standard = "standard"  # Opus EIC + Sonnet others, web search on -- default
+
+
 class Report(SQLModel, table=True):
     __tablename__ = "reports"
 
     id: int | None = Field(default=None, primary_key=True)
     theme: str
     subtitle: str | None = None
+    mode: ReportMode = Field(default=ReportMode.standard)
     stage: ReportStage = Field(default=ReportStage.queued, index=True)
     error: str | None = None
     pdf_path: str | None = None

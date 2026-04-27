@@ -25,7 +25,7 @@ class DataAndCharts(Agent):
             **kwargs,  # type: ignore[arg-type]
         )
 
-    def build(self, brief: str, notes: str, charts_dir: Path) -> AgentResult:
+    def build(self, brief: str, notes: str, charts_dir: Path, *, fast: bool = False) -> AgentResult:
         prompt = f"""You're the Data & Charts agent on a Forte Research report. The brief lists chart ideas under '# CHARTS' and the analyst notes are below. Generate 2-3 charts that land hardest, then write the data section.
 
 BRIEF:
@@ -62,4 +62,9 @@ Do not invent data. Every claim cites a number from a series you actually fetche
             yfinance_history_tool(),
             make_chart_tool(charts_dir),
         ]
-        return self.run(prompt, tools=tools, max_tokens=3072, max_iters=8)
+        return self.run(
+            prompt,
+            tools=tools,
+            max_tokens=2048 if fast else 3072,
+            max_iters=6 if fast else 8,
+        )
