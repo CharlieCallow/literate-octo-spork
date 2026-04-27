@@ -61,7 +61,7 @@ Use whichever tools fit your beat. Stay in your voice. Write structured notes in
             tools=tools,
             server_tools=[web_search_tool()],
             max_tokens=3072,
-            max_iters=10,
+            max_iters=6,
         )
 
     def draft(self, brief: str, notes: str, theme: str) -> AgentResult:

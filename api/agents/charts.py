@@ -62,4 +62,4 @@ Do not invent data. Every claim cites a number from a series you actually fetche
             yfinance_history_tool(),
             make_chart_tool(charts_dir),
         ]
-        return self.run(prompt, tools=tools, max_tokens=3072, max_iters=12)
+        return self.run(prompt, tools=tools, max_tokens=3072, max_iters=8)

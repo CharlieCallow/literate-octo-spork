@@ -4,15 +4,19 @@ via an audit hook."""
 
 from __future__ import annotations
 
+import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from anthropic import Anthropic
+from anthropic import Anthropic, RateLimitError
 
 from api.agents.cost import CostTracker, Usage
 from api.settings import settings
+
+log = logging.getLogger("agent")
 
 AuditHook = Callable[[str, dict[str, Any]], None]
 ToolFn = Callable[..., Any]
@@ -54,7 +58,10 @@ class Agent:
         self.cost = cost
         self.model = model or self.default_model
         self.audit = audit or (lambda _e, _d: None)
-        self._client = Anthropic(api_key=settings.anthropic_api_key)
+        # max_retries=5 lets the SDK ride out transient 429s with its own
+        # backoff. We add an outer wrapper for 429s that need a longer wait
+        # (per-minute token limits don't clear inside the SDK's window).
+        self._client = Anthropic(api_key=settings.anthropic_api_key, max_retries=5)
 
     @property
     def slug(self) -> str:
@@ -104,7 +111,7 @@ class Agent:
             if anth_tools:
                 kwargs["tools"] = anth_tools
 
-            resp = self._client.messages.create(**kwargs)
+            resp = self._call_with_429_backoff(kwargs)
 
             usage = Usage(
                 input_tokens=getattr(resp.usage, "input_tokens", 0),
@@ -160,3 +167,33 @@ class Agent:
             cost_usd=total_cost,
             transcript=transcript,
         )
+
+    def _call_with_429_backoff(self, kwargs: dict[str, Any]) -> Any:
+        """Call messages.create() and ride out per-minute rate-limit windows.
+
+        The Anthropic SDK retries on 429 internally, but its backoff window is
+        short. Per-minute-token limits often need a full bucket reset (~60s);
+        we honour the retry-after header (capped at 65s) for up to 4 attempts."""
+        attempts = 4
+        for i in range(attempts):
+            try:
+                return self._client.messages.create(**kwargs)
+            except RateLimitError as e:
+                if i == attempts - 1:
+                    raise
+                wait = 35
+                resp = getattr(e, "response", None)
+                if resp is not None:
+                    ra = resp.headers.get("retry-after")
+                    if ra:
+                        try:
+                            wait = min(int(ra), 65)
+                        except ValueError:
+                            pass
+                log.warning(
+                    "agent=%s rate-limited; sleeping %ss (attempt %d/%d)",
+                    self.slug, wait, i + 1, attempts,
+                )
+                self.audit("rate_limit", {"agent": self.slug, "wait_s": wait, "attempt": i + 1})
+                time.sleep(wait)
+        raise RuntimeError("unreachable")  # pragma: no cover
