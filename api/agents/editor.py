@@ -20,20 +20,52 @@ class EditorInChief(Agent):
             **kwargs,  # type: ignore[arg-type]
         )
 
-    def write_brief(self, theme: str, *, subtitle: str | None = None) -> AgentResult:
-        prompt = f"""A new theme has been commissioned for a Forte Research report.
+    def write_brief(
+        self,
+        theme: str,
+        *,
+        subtitle: str | None = None,
+        available_contributors: list[dict[str, str]] | None = None,
+    ) -> AgentResult:
+        roster = available_contributors or []
+        roster_blob = "\n".join(f"- `{c['slug']}` — {c['name']} ({c['role']})" for c in roster) or "(none)"
+
+        prompt = f"""A new theme has been commissioned for a Forte Research report. Write a structured brief.
 
 THEME: {theme}
-SUBTITLE: {subtitle or "(none yet — propose one)"}
+SUBTITLE: {subtitle or "(propose one)"}
 
-Write a one-page brief in markdown. Cover:
-- The angle (one sentence — what the report's actually arguing).
-- The 3-5 key questions the report must answer.
-- Proposed structure (3-5 sections with one-line descriptions and which kind of analyst writes each).
-- One or two visualisations you want to see.
-- Any data sources to prioritise.
+AVAILABLE CONTRIBUTORS:
+{roster_blob}
 
-Be opinionated. This is the brief that the team works from.
+Output the brief in markdown using EXACTLY these literal section headings (they're parsed by the workflow):
+
+# ANGLE
+<one sentence — what this report is actually arguing>
+
+# SUBTITLE
+<one sentence — short, descriptive, goes on the cover page under the title>
+
+# QUESTIONS
+1. <question 1>
+2. <question 2>
+3. <question 3>
+
+# CONTRIBUTORS
+<one bullet per contributor we want on this report. Use the slug verbatim from AVAILABLE CONTRIBUTORS. Format:>
+- `<slug>`: <one line on what they cover for this report>
+
+# CHARTS
+<2-3 chart ideas, each one bullet:>
+- <chart title> — <what it shows / which data source / why it lands>
+
+# DATA SOURCES
+- <source>: <series IDs / tickers / queries>
+
+# STRUCTURE
+<3-5 sections in the order they should appear, each one bullet describing the section topic.>
+
+Be opinionated. This is the brief the team works from.
 """
         return self.run(prompt, max_tokens=2048)
 
