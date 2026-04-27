@@ -17,6 +17,7 @@ def _now() -> datetime:
 class ReportStage(str, Enum):
     queued = "queued"
     brief = "brief"
+    recruit = "recruit"  # M4: spin up temp specialists if the brief flagged any
     research = "research"
     charts = "charts"
     draft = "draft"

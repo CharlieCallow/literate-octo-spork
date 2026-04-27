@@ -16,6 +16,7 @@ from api.agents.base import AgentResult, Citation
 from api.agents.charts import DataAndCharts
 from api.agents.cost import CostTracker
 from api.agents.editor import EditorInChief
+from api.agents.recruiter import Recruiter
 from api.db import engine
 from api.models import AuditLog, Report, ReportMode, ReportStage
 from api.render.pdf import Contributor, Section, render_pdf
@@ -24,6 +25,7 @@ from api.workflow.audit import audit_hook
 
 STAGE_ORDER: list[ReportStage] = [
     ReportStage.brief,
+    ReportStage.recruit,
     ReportStage.research,
     ReportStage.charts,
     ReportStage.draft,
@@ -144,21 +146,62 @@ def _models_for(mode: ReportMode) -> dict[str, str]:
     }
 
 
+def _persona_path(slug: str) -> Path | None:
+    """Find a persona file by slug in either the standing team/ or team/temp/."""
+    main = settings.team_dir / f"{slug}.md"
+    if main.exists():
+        return main
+    temp = settings.team_dir / "temp" / f"{slug}.md"
+    if temp.exists():
+        return temp
+    return None
+
+
+_HEADER_RE = re.compile(r"^#\s+(?P<name>.+?)\s+(?:—|-+)\s+(?P<role>.+)$", re.M)
+
+
+def _persona_meta(slug: str) -> dict[str, str] | None:
+    """Read the #-heading line from a persona file to derive name + role.
+    Falls back to the standing ROSTER for known slugs."""
+    if slug in ROSTER_BY_SLUG:
+        return ROSTER_BY_SLUG[slug]
+    p = _persona_path(slug)
+    if p is None:
+        return None
+    text = p.read_text(encoding="utf-8")
+    if m := _HEADER_RE.search(text):
+        return {"slug": slug, "name": m.group("name").strip(), "role": m.group("role").strip()}
+    return {"slug": slug, "name": slug.replace("-", " ").title(), "role": "Specialist"}
+
+
 def _make_analyst(slug: str, cost: CostTracker, audit, model: str) -> Analyst:  # type: ignore[no-untyped-def]
-    return Analyst(f"{slug}.md", cost, audit=audit, model=model)
+    p = _persona_path(slug)
+    if p is None:
+        # Defensive default: fall back to expected standing-team layout so the
+        # error surfaces from Anthropic.read() rather than here.
+        return Analyst(f"{slug}.md", cost, audit=audit, model=model)
+    rel = p.relative_to(settings.team_dir).as_posix()
+    return Analyst(rel, cost, audit=audit, model=model)
 
 
 def _resolved_contributors(report: Report, brief: str) -> list[dict[str, str]]:
     """Resolve which analysts are on this report.
     Priority: explicit team_override on the report -> brief's CONTRIBUTORS
-    section -> full roster as a safety net."""
+    section + any temp specialists the Recruiter spun up -> full roster."""
     if report.team_override:
-        valid = [ROSTER_BY_SLUG[s] for s in report.team_override if s in ROSTER_BY_SLUG]
+        valid = [m for s in report.team_override if (m := _persona_meta(s))]
         if valid:
             return valid
+
     parsed = parse_brief(brief)
-    slugs = parsed["contributor_slugs"]
-    valid = [ROSTER_BY_SLUG[s] for s in slugs if s in ROSTER_BY_SLUG]
+    slugs: list[str] = list(parsed["contributor_slugs"])  # type: ignore[arg-type]
+    # Fold in any temp specialists declared in the brief.
+    for spec in parsed.get("adhoc_specialists", []) or []:  # type: ignore[union-attr]
+        s = spec["slug"] if isinstance(spec, dict) else None
+        if s and s not in slugs:
+            slugs.append(s)
+
+    valid = [m for s in slugs if (m := _persona_meta(s))]
     return valid or list(ROSTER)
 
 
@@ -196,6 +239,50 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
                 session.add(r)
                 session.commit()
         _record(report.id, wd, result)
+        return _next_stage(stage)
+
+    if stage == ReportStage.recruit:
+        # Generate persona files for any temp specialists the EIC flagged.
+        # If the brief didn't flag any, the stage is a no-op and we move on.
+        brief = _read(wd / "brief.md")
+        specs = parse_brief(brief).get("adhoc_specialists", []) or []
+        temp_dir = settings.team_dir / "temp"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+
+        if not specs:
+            _write(wd / "recruit.md", "_No ad-hoc specialists requested._\n")
+            return _next_stage(stage)
+
+        recruiter = Recruiter(cost, audit=audit, model=models["analyst"])
+        log_lines: list[str] = []
+        for spec in specs:  # type: ignore[union-attr]
+            if not isinstance(spec, dict):
+                continue
+            slug = spec.get("slug", "")
+            request = spec.get("request", "")
+            if not slug:
+                continue
+            try:
+                fb = recruiter.propose_specialist(
+                    slug=slug, brief_request=request, theme=report.theme,
+                )
+            except Exception as e:  # noqa: BLE001
+                log_lines.append(f"- `{slug}`: failed -- {e}")
+                continue
+            (temp_dir / f"{slug}.md").write_text(fb.text, encoding="utf-8")
+            _record(report.id, wd, fb)
+            log_lines.append(f"- `{slug}`: hired ({request})")
+
+        # Refresh contributor_slugs so subsequent stages + /team see the temps.
+        with Session(engine) as session:
+            r = session.get(Report, report.id)
+            if r:
+                resolved = _resolved_contributors(r, brief)
+                r.contributor_slugs = [c["slug"] for c in resolved]
+                session.add(r)
+                session.commit()
+
+        _write(wd / "recruit.md", "# Recruit stage\n\n" + "\n".join(log_lines) + "\n")
         return _next_stage(stage)
 
     if stage == ReportStage.research:
@@ -362,7 +449,7 @@ def _concat_notes(wd: Path, contributors: list[dict[str, str]]) -> str:
 
 # ---------- brief parsing ----------
 
-_BRIEF_SECTION_RE = re.compile(r"^# (?P<head>[A-Z][A-Z ()]+)\s*\n(?P<body>.+?)(?=\n# |\Z)", re.S | re.M)
+_BRIEF_SECTION_RE = re.compile(r"^# (?P<head>[A-Z][A-Z\- ()]+)\s*\n(?P<body>.+?)(?=\n# |\Z)", re.S | re.M)
 _BRIEF_SLUG_RE   = re.compile(r"`([a-z0-9][a-z0-9-]*)`")
 
 
@@ -379,6 +466,18 @@ def parse_brief(text: str) -> dict[str, object]:
                 contributor_slugs.append(slug)
                 seen.add(slug)
 
+    # Optional ad-hoc specialists -- the EIC writes one bullet per gap.
+    adhoc_specialists: list[dict[str, str]] = []
+    a_block = sections.get("AD-HOC SPECIALIST")
+    if a_block and "(none)" not in a_block.lower():
+        for line in a_block.splitlines():
+            m = re.match(r"\s*[-*]\s*`([a-z0-9][a-z0-9-]*)`\s*:\s*(.+)$", line)
+            if m:
+                adhoc_specialists.append({
+                    "slug": m.group(1),
+                    "request": m.group(2).strip(),
+                })
+
     subtitle = (sections.get("SUBTITLE") or "").strip().splitlines()[0].strip() if sections.get("SUBTITLE") else ""
 
     return {
@@ -386,6 +485,7 @@ def parse_brief(text: str) -> dict[str, object]:
         "subtitle": subtitle,
         "questions": sections.get("QUESTIONS", "").strip(),
         "contributor_slugs": contributor_slugs,
+        "adhoc_specialists": adhoc_specialists,
         "charts": sections.get("CHARTS", "").strip(),
         "data_sources": sections.get("DATA SOURCES", "").strip(),
         "structure": sections.get("STRUCTURE", "").strip(),

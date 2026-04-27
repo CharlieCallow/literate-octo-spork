@@ -101,6 +101,11 @@ Output the brief in markdown using EXACTLY these literal section headings (they'
 # STRUCTURE
 <3-5 sections in the order they should appear, each one bullet describing the section topic.>
 
+# AD-HOC SPECIALIST
+<Optional. Only include this section if the standing roster genuinely lacks the expertise this theme needs (e.g. clinical-trial reads for a biotech theme). Each bullet:>
+- `<short-slug-with-dashes>`: <one line on what they cover and why standing analysts fall short>
+<If you don't need a specialist, write "(none)" or omit the section.>
+
 Be opinionated. This is the brief the team works from.
 """
         return self.run(prompt, max_tokens=2048)

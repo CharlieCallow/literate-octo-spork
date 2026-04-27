@@ -64,3 +64,27 @@ def test_missing_sections_default_to_empty() -> None:
     assert parsed["contributor_slugs"] == []
     assert parsed["subtitle"] == ""
     assert "Just the angle" in str(parsed["angle"])
+
+
+def test_parses_adhoc_specialists() -> None:
+    text = """# AD-HOC SPECIALIST
+- `clinical-trials-analyst`: covers Phase 2/3 readouts and biotech pipeline flow
+- `power-grid-analyst`: covers PJM/ERCOT interconnect queue dynamics
+"""
+    parsed = parse_brief(text)
+    specs = parsed["adhoc_specialists"]
+    assert len(specs) == 2  # type: ignore[arg-type]
+    assert specs[0]["slug"] == "clinical-trials-analyst"  # type: ignore[index]
+    assert "Phase 2/3" in specs[0]["request"]  # type: ignore[index]
+    assert specs[1]["slug"] == "power-grid-analyst"  # type: ignore[index]
+
+
+def test_adhoc_none_treated_as_empty() -> None:
+    text = "# AD-HOC SPECIALIST\n(none)\n"
+    parsed = parse_brief(text)
+    assert parsed["adhoc_specialists"] == []
+
+
+def test_adhoc_section_missing_yields_empty() -> None:
+    parsed = parse_brief("# ANGLE\nThe angle.\n")
+    assert parsed["adhoc_specialists"] == []
