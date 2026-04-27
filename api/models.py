@@ -6,8 +6,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from sqlalchemy import Column
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import JSON, Column
 from sqlmodel import Field, SQLModel
 
 
@@ -40,7 +39,7 @@ class Report(SQLModel, table=True):
     cost_usd: float = 0.0
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
-    state: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB, nullable=False, server_default="{}"))
+    state: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
 
 
 class Job(SQLModel, table=True):
@@ -65,7 +64,7 @@ class AuditLog(SQLModel, table=True):
     actor: str  # agent slug or "system"
     event: str  # e.g. "tool_call", "model_call", "stage_complete"
     cost_usd: float = 0.0
-    details: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB, nullable=False, server_default="{}"))
+    details: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
     created_at: datetime = Field(default_factory=_now)
 
 
@@ -76,4 +75,4 @@ class DataCache(SQLModel, table=True):
     source: str = Field(index=True)
     query_hash: str = Field(index=True)
     fetched_at: datetime = Field(default_factory=_now)
-    payload: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB, nullable=False, server_default="{}"))
+    payload: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))

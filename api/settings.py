@@ -29,11 +29,11 @@ class Settings(BaseSettings):
     dashboard_password_hash: str = ""
     session_secret: str = "change-me"
 
-    database_url: str = "postgresql+psycopg://forte:forte@db:5432/forte"
+    database_url: str = f"sqlite:///{REPO_ROOT / 'forte.db'}"
 
     fred_api_key: str = ""
 
-    reports_dir: Path = Path("/data/reports")
+    reports_dir: Path = REPO_ROOT / "reports"
 
     @property
     def assets_dir(self) -> Path:

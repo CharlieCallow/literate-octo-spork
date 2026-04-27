@@ -19,6 +19,8 @@ build/
 reports/*
 !reports/.gitkeep
 smoke-out/
+forte.db
+forte.db-journal
 team/temp/*
 !team/temp/.gitkeep
 team/archive/*
