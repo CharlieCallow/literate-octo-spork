@@ -281,8 +281,43 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         return _next_stage(stage)
 
     if stage == ReportStage.feedback:
-        # M4 — for now just leave a placeholder log entry.
-        _write(wd / "feedback.md", "_Feedback log lands in M4._\n")
+        eic = EditorInChief(cost, audit=audit, model=models["editor"])
+        brief = _read(wd / "brief.md")
+        edited = _read(wd / "edited.md")
+        edited_sections = {
+            s["author"]: s["body"]
+            for s in parse_edited(edited).get("sections", [])  # type: ignore[union-attr]
+            if isinstance(s, dict)
+        }
+        log_entries: list[str] = []
+        for c in _resolved_contributors(report, brief):
+            original = _strip_heading(_read(wd / f"section-{c['slug']}.md"))
+            edited_section = edited_sections.get(c["name"], original)
+            if not original.strip():
+                continue
+            try:
+                fb = eic.write_feedback(
+                    contributor_name=c["name"],
+                    contributor_role=c["role"],
+                    theme=report.theme,
+                    original_draft=original,
+                    edited_section=edited_section,
+                )
+            except Exception as e:  # noqa: BLE001
+                # Feedback is non-blocking -- skip on failure rather than fail the stage.
+                log_entries.append(f"## {c['name']}\n\n_feedback failed: {e}_\n")
+                continue
+            _record(report.id, wd, fb)
+            persona_path = settings.team_dir / f"{c['slug']}.md"
+            try:
+                from api.feedback import append_entry
+                append_entry(persona_path, body=fb.text, report_id=report.id)
+            except Exception as e:  # noqa: BLE001
+                log_entries.append(f"## {c['name']}\n\n_failed to append: {e}_\n{fb.text}\n")
+                continue
+            log_entries.append(f"## {c['name']}\n\n{fb.text}\n")
+
+        _write(wd / "feedback.md", "\n\n---\n\n".join(log_entries) or "_No feedback written._\n")
         return _next_stage(stage)
 
     return ReportStage.done

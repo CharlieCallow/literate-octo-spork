@@ -1,4 +1,4 @@
-"""Editor-in-Chief. Opus-tier. Briefs at the start, edits at the end."""
+"""Editor-in-Chief. Opus-tier. Briefs at the start, edits at the end, writes feedback."""
 
 from __future__ import annotations
 
@@ -17,6 +17,37 @@ class EditorInChief(Agent):
             cost=cost,
             **kwargs,  # type: ignore[arg-type]
         )
+
+    def write_feedback(
+        self,
+        *,
+        contributor_name: str,
+        contributor_role: str,
+        theme: str,
+        original_draft: str,
+        edited_section: str,
+    ) -> AgentResult:
+        prompt = f"""You're the Editor-in-Chief writing post-report feedback on a contributor's work. The note will be appended to their persona file's '## Feedback log' section -- they read it before the next assignment.
+
+CONTRIBUTOR: {contributor_name} -- {contributor_role}
+REPORT THEME: {theme}
+
+THEIR ORIGINAL DRAFT:
+
+{original_draft}
+
+YOUR EDITED VERSION:
+
+{edited_section}
+
+Write a single short feedback note (60-120 words). Cover:
+- What worked in their voice or take
+- What you rewrote and why (be specific -- name a sentence or claim)
+- One concrete thing for next time
+
+Direct, not nice. No headings, no list -- just a paragraph. Stay in your voice.
+"""
+        return self.run(prompt, max_tokens=512)
 
     def write_brief(
         self,
