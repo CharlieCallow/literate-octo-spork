@@ -44,24 +44,29 @@ ANALYST NOTES:
 
 {notes}
 
-Workflow:
+Workflow -- IN THIS ORDER:
 
-1. Read the brief's CHARTS section. Generate 2-3 charts (no more, no less).
-2. Use `fred_series` to scout macro series, or `yfinance_history` to scout tickers, before charting them.
-3. Call `make_chart` 2-3 times, once per chart. For each:
+1. Read the brief's CHARTS section. Pick 2-3 charts (no more, no less).
+2. Use `fred_series` or `yfinance_history` to scout series before charting them, ONLY if you need to verify a series exists.
+3. Call `make_chart` 2-3 times -- ONCE PER CHART. Each call must succeed before you reference the file.
    - chart_kind: 'line' or 'bar'
    - source: 'fred' or 'yfinance'
-   - series_or_ticker: the FRED series id (e.g. 'DGS10') or yfinance ticker (e.g. 'SPY', '^VIX')
+   - series_or_ticker: real FRED id (e.g. 'DGS10') or yfinance ticker (e.g. 'SPY', '^VIX')
    - title: 8-15 words, descriptive
    - subtitle: one short sentence, the angle
-   - filename: short and unique, e.g. 'rates.png', 'spy.png', 'vix.png'
-   - period (yfinance only): '6mo', '1y', '5y', etc.
-4. Then output a markdown section in your voice:
+   - filename: short and unique like 'rates.png', 'spy.png'
+4. AFTER all make_chart calls succeed, write the markdown section. This is mandatory -- the agent ALWAYS finishes with the section, never with just a status line.
    - Start with `## Data & charts`.
    - For EACH chart you generated, write a short paragraph (60-120 words) of commentary.
-     Place `[chart: <filename>]` on its own line at the START of each paragraph so the chart appears above its commentary.
+     Place `[chart: <exact-filename-you-passed-to-make_chart>]` on its own line at the START of each paragraph.
+   - Use the EXACT filenames you passed to make_chart -- typos = missing charts.
    - Terse. Two sentences and a number per chart. Drop one dry one-liner across the section.
    - Total length 200-400 words.
+
+Failure modes to avoid:
+- Writing the section before calling make_chart -- leads to chart refs that don't exist.
+- Saying "Three charts rendered. Now the data section." and stopping -- always write the actual section.
+- Inventing filenames in the section that don't match the make_chart calls.
 
 Do not invent data. Every claim cites a number from a series you actually fetched.
 """
@@ -70,6 +75,9 @@ Do not invent data. Every claim cites a number from a series you actually fetche
             yfinance_history_tool(),
             make_chart_tool(charts_dir),
         ]
-        max_iters = {ReportMode.fast: 6, ReportMode.standard: 8, ReportMode.deep: 12}[mode]
+        # Iter budget needs to cover scout + 2-3 make_chart calls + a final
+        # answer block. Older budgets were tight; bumping so the agent can
+        # finish the section after generating charts.
+        max_iters = {ReportMode.fast: 8, ReportMode.standard: 12, ReportMode.deep: 16}[mode]
         max_tokens = {ReportMode.fast: 2048, ReportMode.standard: 3072, ReportMode.deep: 4096}[mode]
         return self.run(prompt, tools=tools, max_tokens=max_tokens, max_iters=max_iters)

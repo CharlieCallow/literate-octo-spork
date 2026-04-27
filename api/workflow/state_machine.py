@@ -125,6 +125,9 @@ def _record(report_id: int, wd: Path, result: AgentResult) -> None:
         _append_citations(wd, result.citations)
 
 
+MAX_SOURCES = 18  # cap the Sources section so the report stays tidy
+
+
 def _append_citations(wd: Path, citations: list[Citation]) -> None:
     src = wd / "sources.json"
     existing: list[dict[str, str | None]] = []
@@ -135,7 +138,7 @@ def _append_citations(wd: Path, citations: list[Citation]) -> None:
             existing = []
     seen = {c.get("url") for c in existing if isinstance(c, dict)}
     for c in citations:
-        if c.url and c.url not in seen:
+        if c.url and c.url not in seen and len(existing) < MAX_SOURCES:
             existing.append({"url": c.url, "title": c.title, "source": c.source})
             seen.add(c.url)
     src.write_text(json.dumps(existing, indent=2), encoding="utf-8")
@@ -313,7 +316,13 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
     if stage == ReportStage.research:
         brief = _read(wd / "brief.md")
         contributors = _resolved_contributors(report, brief)
-        for c in contributors:
+        # Sequential with a small pause so we don't bunch token usage into one
+        # minute and trip the per-minute rate limit. Adapter-level 429 retry
+        # still kicks in if we hit it anyway.
+        import time
+        for i, c in enumerate(contributors):
+            if i > 0:
+                time.sleep(8)
             analyst = _make_analyst(c["slug"], cost, audit, models["analyst"])
             result = analyst.research(brief, report.theme, wd, mode=report.mode)
             _write(wd / f"notes-{c['slug']}.md", result.text)
@@ -599,11 +608,28 @@ _CHART_TAG_RE = re.compile(r"\[chart:\s*(.+?)\s*\]")
 
 
 def _inline_charts(body: str, wd: Path) -> str:
+    """Replace `[chart: filename.png]` tags with <figure><img> blocks.
+
+    If the referenced chart is missing (typically a D&C agent that wrote a ref
+    before calling make_chart), fall back to the next available chart in the
+    directory rather than leaving a placeholder. Each existing chart is used
+    once at most, in filesystem order; surplus refs are stripped silently."""
+    charts_dir = (wd / "charts").resolve()
+    available: list[Path] = sorted(charts_dir.glob("*.png")) if charts_dir.exists() else []
+    used: set[str] = set()
+
     def repl(m: re.Match[str]) -> str:
-        fname = m.group(1)
-        path = (wd / "charts" / fname).resolve()
-        if not path.exists():
-            return f"_(chart missing: {fname})_"
-        return f'<figure><img src="{path.as_uri()}" alt="{fname}"></figure>'
+        fname = m.group(1).strip()
+        path = (charts_dir / fname)
+        if path.exists() and fname not in used:
+            used.add(fname)
+            return f'<figure><img src="{path.as_uri()}" alt="{fname}"></figure>'
+        # Substitute the next unused chart in the directory.
+        for cand in available:
+            if cand.name not in used:
+                used.add(cand.name)
+                return f'<figure><img src="{cand.as_uri()}" alt="{cand.name}"></figure>'
+        # No charts left. Drop the reference quietly.
+        return ""
 
     return _CHART_TAG_RE.sub(repl, body)
