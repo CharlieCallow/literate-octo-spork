@@ -10,7 +10,7 @@ from typing import Any
 import pandas as pd
 
 from api.agents.base import Tool
-from api.data import edgar, fred, wikipedia
+from api.data import edgar, fred, hn, reddit, wikipedia
 from api.data import yfinance as yf_data
 from api.render import charts as chart_helpers
 
@@ -192,6 +192,47 @@ def make_chart_tool(out_dir: Path) -> Tool:
 
 
 # ---------- Anthropic-managed web search (server-side) ----------
+
+def reddit_hot_tool() -> Tool:
+    def fn(subreddit: str, limit: int = 15) -> str:
+        posts = reddit.get_hot(subreddit, limit=limit)
+        return json.dumps({"subreddit": subreddit, "n": len(posts), "posts": posts})
+
+    return Tool(
+        name="reddit_hot",
+        description="Fetch hot posts from a subreddit. Returns titles, scores, comments, permalinks. Useful for sentiment / what people are actually talking about.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "subreddit": {"type": "string", "description": "Subreddit name without /r/, e.g. 'wallstreetbets', 'stocks', 'investing', 'SecurityAnalysis'."},
+                "limit": {"type": "integer", "default": 15, "description": "Max posts to return (1-25)."},
+            },
+            "required": ["subreddit"],
+        },
+        fn=fn,
+    )
+
+
+def hn_search_tool() -> Tool:
+    def fn(query: str, tags: str = "story", hits: int = 15) -> str:
+        stories = hn.search(query, tags=tags, hits=hits)
+        return json.dumps({"query": query, "tags": tags, "n": len(stories), "stories": stories})
+
+    return Tool(
+        name="hn_search",
+        description="Search Hacker News by keyword via the Algolia API. Useful for tech-adjacent themes (semis, AI, crypto, biotech, regulation).",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search keywords."},
+                "tags": {"type": "string", "default": "story", "description": "'story' (default), 'front_page', 'comment', 'show_hn', 'ask_hn'."},
+                "hits": {"type": "integer", "default": 15},
+            },
+            "required": ["query"],
+        },
+        fn=fn,
+    )
+
 
 def web_search_tool(max_uses: int = 5) -> dict[str, Any]:
     """Anthropic-managed web search. Pass via Agent.run(server_tools=[web_search_tool()])."""

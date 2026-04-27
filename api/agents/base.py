@@ -66,22 +66,39 @@ def _extract_server_citations(content_blocks: Any, into: list[Citation]) -> None
 
 
 def _extract_local_citations(tool_name: str, out: Any, into: list[Citation]) -> None:
-    """Parse a local tool's JSON output for url / filings[*].url fields."""
+    """Parse a local tool's JSON output for url-like fields and append Citations.
+
+    Handles:
+      - top-level `url` (Wikipedia)
+      - `filings[*].url` (EDGAR)
+      - `posts[*].permalink` (Reddit)
+      - `stories[*].url` and `stories[*].hn_url` (HN Algolia)
+    """
     try:
         data = json.loads(out) if isinstance(out, str) else out
     except (json.JSONDecodeError, TypeError):
         return
     if not isinstance(data, dict):
         return
+
     if url := data.get("url"):
         into.append(Citation(url=url, title=data.get("title"), source=tool_name))
+
     for f in data.get("filings", []) or []:
         if isinstance(f, dict) and (u := f.get("url")):
-            into.append(Citation(
-                url=u,
-                title=f.get("form"),
-                source=tool_name,
-            ))
+            into.append(Citation(url=u, title=f.get("form"), source=tool_name))
+
+    for p in data.get("posts", []) or []:
+        if isinstance(p, dict) and (u := p.get("permalink") or p.get("url")):
+            into.append(Citation(url=u, title=p.get("title"), source=tool_name))
+
+    for s in data.get("stories", []) or []:
+        if not isinstance(s, dict):
+            continue
+        # HN stories have both an external `url` and a `hn_url` discussion link.
+        # The external URL is more useful for citation; fall back to the HN page.
+        if u := (s.get("url") or s.get("hn_url")):
+            into.append(Citation(url=u, title=s.get("title"), source=tool_name))
 
 
 class Agent:

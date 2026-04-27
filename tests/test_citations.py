@@ -52,6 +52,33 @@ def test_local_no_op_when_no_url_key() -> None:
     assert cs == []
 
 
+def test_local_extracts_reddit_permalinks() -> None:
+    out = json.dumps({
+        "subreddit": "wallstreetbets",
+        "posts": [
+            {"title": "NVDA earnings", "permalink": "https://reddit.com/r/wsb/abc"},
+            {"title": "Macro thread", "permalink": "https://reddit.com/r/wsb/def"},
+        ],
+    })
+    cs: list[Citation] = []
+    _extract_local_citations("reddit_hot", out, cs)
+    assert [c.url for c in cs] == ["https://reddit.com/r/wsb/abc", "https://reddit.com/r/wsb/def"]
+
+
+def test_local_extracts_hn_story_urls() -> None:
+    out = json.dumps({
+        "query": "semiconductors",
+        "stories": [
+            {"title": "TSMC outlook", "url": "https://example.com/x", "hn_url": "https://news.ycombinator.com/1"},
+            {"title": "Discussion only", "hn_url": "https://news.ycombinator.com/2"},  # no external url
+        ],
+    })
+    cs: list[Citation] = []
+    _extract_local_citations("hn_search", out, cs)
+    # First story gives the external URL; second falls back to the HN discussion link.
+    assert [c.url for c in cs] == ["https://example.com/x", "https://news.ycombinator.com/2"]
+
+
 def test_server_extracts_web_search_results() -> None:
     # Mimic the Anthropic SDK's content blocks — duck-typed objects with
     # `type` and `content`/`url` attributes.
