@@ -11,6 +11,7 @@ from api.agents.tools import (
     make_chart_tool,
     yfinance_history_tool,
 )
+from api.models import ReportMode
 from api.settings import settings
 
 
@@ -25,7 +26,14 @@ class DataAndCharts(Agent):
             **kwargs,  # type: ignore[arg-type]
         )
 
-    def build(self, brief: str, notes: str, charts_dir: Path, *, fast: bool = False) -> AgentResult:
+    def build(
+        self,
+        brief: str,
+        notes: str,
+        charts_dir: Path,
+        *,
+        mode: ReportMode = ReportMode.standard,
+    ) -> AgentResult:
         prompt = f"""You're the Data & Charts agent on a Forte Research report. The brief lists chart ideas under '# CHARTS' and the analyst notes are below. Generate 2-3 charts that land hardest, then write the data section.
 
 BRIEF:
@@ -62,9 +70,6 @@ Do not invent data. Every claim cites a number from a series you actually fetche
             yfinance_history_tool(),
             make_chart_tool(charts_dir),
         ]
-        return self.run(
-            prompt,
-            tools=tools,
-            max_tokens=2048 if fast else 3072,
-            max_iters=6 if fast else 8,
-        )
+        max_iters = {ReportMode.fast: 6, ReportMode.standard: 8, ReportMode.deep: 12}[mode]
+        max_tokens = {ReportMode.fast: 2048, ReportMode.standard: 3072, ReportMode.deep: 4096}[mode]
+        return self.run(prompt, tools=tools, max_tokens=max_tokens, max_iters=max_iters)

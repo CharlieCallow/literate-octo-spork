@@ -73,9 +73,10 @@ def _today_spent() -> float:
     return sum(r.cost_usd for r in rows if r.created_at.date() == today)
 
 
-def _tracker() -> CostTracker:
+def _tracker(report: Report) -> CostTracker:
+    cap = report.budget_cap_usd if report.budget_cap_usd else settings.cost_per_report_usd
     return CostTracker(
-        report_cap=settings.cost_per_report_usd,
+        report_cap=cap,
         day_cap=settings.cost_per_day_usd,
         day_spent=_today_spent(),
     )
@@ -132,7 +133,7 @@ def _next_stage(stage: ReportStage) -> ReportStage:
 
 def _models_for(mode: ReportMode) -> dict[str, str]:
     """Pick model IDs per stage based on report mode.
-    `fast` runs Haiku end-to-end (testing); `standard` uses Opus EIC + Sonnet."""
+    fast: Haiku end-to-end (testing). standard/deep: Opus EIC + Sonnet others."""
     if mode == ReportMode.fast:
         m = settings.model_haiku
         return {"editor": m, "analyst": m, "data": m}
@@ -147,9 +148,14 @@ def _make_analyst(slug: str, cost: CostTracker, audit, model: str) -> Analyst:  
     return Analyst(f"{slug}.md", cost, audit=audit, model=model)
 
 
-def _resolved_contributors(brief: str) -> list[dict[str, str]]:
-    """Read the brief's CONTRIBUTORS section and resolve to roster entries.
-    Falls back to the full roster if the brief is missing or empty."""
+def _resolved_contributors(report: Report, brief: str) -> list[dict[str, str]]:
+    """Resolve which analysts are on this report.
+    Priority: explicit team_override on the report -> brief's CONTRIBUTORS
+    section -> full roster as a safety net."""
+    if report.team_override:
+        valid = [ROSTER_BY_SLUG[s] for s in report.team_override if s in ROSTER_BY_SLUG]
+        if valid:
+            return valid
     parsed = parse_brief(brief)
     slugs = parsed["contributor_slugs"]
     valid = [ROSTER_BY_SLUG[s] for s in slugs if s in ROSTER_BY_SLUG]
@@ -163,9 +169,8 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
 
     wd = working_dir(report.id)
     audit = audit_hook(report.id)
-    cost = _tracker()
+    cost = _tracker(report)
     models = _models_for(report.mode)
-    is_fast = report.mode == ReportMode.fast
 
     if stage == ReportStage.brief:
         eic = EditorInChief(cost, audit=audit, model=models["editor"])
@@ -189,10 +194,10 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
 
     if stage == ReportStage.research:
         brief = _read(wd / "brief.md")
-        contributors = _resolved_contributors(brief)
+        contributors = _resolved_contributors(report, brief)
         for c in contributors:
             analyst = _make_analyst(c["slug"], cost, audit, models["analyst"])
-            result = analyst.research(brief, report.theme, wd, fast=is_fast)
+            result = analyst.research(brief, report.theme, wd, mode=report.mode)
             _write(wd / f"notes-{c['slug']}.md", result.text)
             _record(report.id, wd, result)
         return _next_stage(stage)
@@ -200,15 +205,15 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
     if stage == ReportStage.charts:
         dc = DataAndCharts(cost, audit=audit, model=models["data"])
         brief = _read(wd / "brief.md")
-        all_notes = _concat_notes(wd, _resolved_contributors(brief))
-        result = dc.build(brief, all_notes, wd / "charts", fast=is_fast)
+        all_notes = _concat_notes(wd, _resolved_contributors(report, brief))
+        result = dc.build(brief, all_notes, wd / "charts", mode=report.mode)
         _write(wd / "data-section.md", result.text)
         _record(report.id, wd, result)
         return _next_stage(stage)
 
     if stage == ReportStage.draft:
         brief = _read(wd / "brief.md")
-        contributors = _resolved_contributors(brief)
+        contributors = _resolved_contributors(report, brief)
         for c in contributors:
             analyst = _make_analyst(c["slug"], cost, audit, models["analyst"])
             notes = _read(wd / f"notes-{c['slug']}.md")
@@ -220,7 +225,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
     if stage == ReportStage.edit:
         eic = EditorInChief(cost, audit=audit, model=models["editor"])
         brief = _read(wd / "brief.md")
-        contributors = _resolved_contributors(brief)
+        contributors = _resolved_contributors(report, brief)
         sections: list[dict[str, str]] = []
         # Only analyst sections go through the EIC. The Data & Charts section
         # passes through verbatim so chart references survive.
@@ -247,7 +252,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         out = wd / "report.pdf"
         contributors_credits = [
             Contributor(EIC_DISPLAY["name"], EIC_DISPLAY["role"]),
-            *[Contributor(c["name"], c["role"]) for c in _resolved_contributors(brief)],
+            *[Contributor(c["name"], c["role"]) for c in _resolved_contributors(report, brief)],
             Contributor(DC_DISPLAY["name"], DC_DISPLAY["role"]),
         ]
         # Reload report to pick up subtitle written during the brief stage.

@@ -13,6 +13,7 @@ from api.agents.tools import (
     wikipedia_tool,
     yfinance_history_tool,
 )
+from api.models import ReportMode
 from api.settings import settings
 
 
@@ -32,7 +33,14 @@ class Analyst(Agent):
             **kwargs,  # type: ignore[arg-type]
         )
 
-    def research(self, brief: str, theme: str, working_dir: Path, *, fast: bool = False) -> AgentResult:
+    def research(
+        self,
+        brief: str,
+        theme: str,
+        working_dir: Path,
+        *,
+        mode: ReportMode = ReportMode.standard,
+    ) -> AgentResult:
         prompt = f"""You're a contributing analyst on a Forte Research report. The Editor-in-Chief's brief is below.
 
 BRIEF:
@@ -56,14 +64,17 @@ Use whichever tools fit your beat. Stay in your voice. Write structured notes in
             wikipedia_tool(),
             edgar_filings_tool(),
         ]
-        # Fast mode: drop web search (biggest cost driver) and tighten the loop.
-        server_tools = [] if fast else [web_search_tool()]
+        # Per-mode tuning. fast: drop web search (biggest cost driver) and
+        # tighten loop. deep: bigger token + iter budget for thorough research.
+        server_tools = [] if mode == ReportMode.fast else [web_search_tool()]
+        max_iters = {ReportMode.fast: 4, ReportMode.standard: 6, ReportMode.deep: 10}[mode]
+        max_tokens = {ReportMode.fast: 2048, ReportMode.standard: 3072, ReportMode.deep: 4096}[mode]
         return self.run(
             prompt,
             tools=tools,
             server_tools=server_tools,
-            max_tokens=2048 if fast else 3072,
-            max_iters=4 if fast else 6,
+            max_tokens=max_tokens,
+            max_iters=max_iters,
         )
 
     def draft(self, brief: str, notes: str, theme: str) -> AgentResult:

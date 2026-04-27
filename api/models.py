@@ -30,6 +30,7 @@ class ReportStage(str, Enum):
 class ReportMode(str, Enum):
     fast = "fast"          # Haiku-only, no web search, tight iters -- testing
     standard = "standard"  # Opus EIC + Sonnet others, web search on -- default
+    deep = "deep"          # Same models as standard, larger iter/token budget -- deep dive
 
 
 class Report(SQLModel, table=True):
@@ -39,6 +40,8 @@ class Report(SQLModel, table=True):
     theme: str
     subtitle: str | None = None
     mode: ReportMode = Field(default=ReportMode.standard)
+    budget_cap_usd: float | None = None  # overrides settings.cost_per_report_usd if set
+    team_override: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
     stage: ReportStage = Field(default=ReportStage.queued, index=True)
     error: str | None = None
     pdf_path: str | None = None

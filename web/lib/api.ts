@@ -4,17 +4,33 @@ export type ReportStage =
   | "queued" | "brief" | "research" | "charts" | "draft"
   | "edit" | "render" | "feedback" | "done" | "failed";
 
-export type ReportMode = "fast" | "standard";
+export type ReportMode = "fast" | "standard" | "deep";
 
 export interface Report {
   id: number;
   theme: string;
   subtitle: string | null;
   mode: ReportMode;
+  budget_cap_usd: number | null;
+  team_override: string[];
   stage: ReportStage;
   error: string | null;
   cost_usd: number;
   pdf_url: string | null;
+}
+
+export interface TeamMember {
+  slug: string;
+  name: string;
+  role: string;
+}
+
+export interface CreateReportPayload {
+  theme: string;
+  subtitle?: string;
+  mode?: ReportMode;
+  team_override?: string[];
+  budget_cap_usd?: number | null;
 }
 
 const API_BASE =
@@ -67,8 +83,9 @@ export const api = {
   listReports: () => req<Report[]>("/reports"),
   getReport: (id: number) => req<Report>(`/reports/${id}`),
   listJobs: (id: number) => req<Job[]>(`/reports/${id}/jobs`),
-  createReport: (theme: string, subtitle?: string, mode: ReportMode = "standard") =>
-    req<Report>("/reports", { method: "POST", body: JSON.stringify({ theme, subtitle, mode }) }),
+  listTeam: () => req<TeamMember[]>("/team"),
+  createReport: (p: CreateReportPayload) =>
+    req<Report>("/reports", { method: "POST", body: JSON.stringify(p) }),
   resume: (id: number) =>
     req<Report>(`/reports/${id}/resume`, { method: "POST" }),
   pdfUrl: (id: number) => `${API_BASE}/reports/${id}/pdf`,

@@ -37,6 +37,9 @@ def _migrate_sqlite() -> None:
         # M2 sprint 3: per-stage cost + retry scheduling
         ("jobs",    "ALTER TABLE jobs ADD COLUMN cost_usd REAL DEFAULT 0.0"),
         ("jobs",    "ALTER TABLE jobs ADD COLUMN run_after TIMESTAMP"),
+        # M2 sprint 4: per-report budget + team override
+        ("reports", "ALTER TABLE reports ADD COLUMN budget_cap_usd REAL"),
+        ("reports", "ALTER TABLE reports ADD COLUMN team_override JSON DEFAULT '[]'"),
     ]
     with engine.connect() as conn:
         for _table, sql in additions:

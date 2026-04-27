@@ -1,21 +1,46 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AuthGate } from "@/components/Auth";
-import { api } from "@/lib/api";
+import { api, type ReportMode, type TeamMember } from "@/lib/api";
 
-type Mode = "fast" | "standard";
+const MODES: { value: ReportMode; title: string; tagline: string }[] = [
+  { value: "fast",     title: "Fast (testing)",  tagline: "Haiku end-to-end. No web search. Tight loop. ~$0.05-0.15." },
+  { value: "standard", title: "Standard",        tagline: "Opus EIC + Sonnet team. Web search on. ~$0.50-1.00." },
+  { value: "deep",     title: "Deep dive",       tagline: "Same models as standard, larger token + iter budget. ~$1.50-3.00." },
+];
 
 export default function NewReportPage() {
   const [theme, setTheme] = useState("");
   const [subtitle, setSubtitle] = useState("");
-  const [mode, setMode] = useState<Mode>("standard");
+  const [mode, setMode] = useState<ReportMode>("standard");
+  const [team, setTeam] = useState<TeamMember[]>([]);
+  const [pickedSlugs, setPickedSlugs] = useState<string[]>([]);
+  const [budgetText, setBudgetText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.listTeam().then(setTeam).catch(() => { /* ignore — auth-gated */ });
+  }, []);
+
+  function toggleSlug(slug: string) {
+    setPickedSlugs((cur) => cur.includes(slug) ? cur.filter((s) => s !== slug) : [...cur, slug]);
+  }
 
   async function submit() {
     setBusy(true); setError(null);
     try {
-      const r = await api.createReport(theme, subtitle || undefined, mode);
+      const budget_cap_usd = budgetText.trim() ? parseFloat(budgetText) : null;
+      if (budget_cap_usd !== null && (Number.isNaN(budget_cap_usd) || budget_cap_usd <= 0)) {
+        throw new Error("Budget must be a positive number");
+      }
+      const r = await api.createReport({
+        theme,
+        subtitle: subtitle || undefined,
+        mode,
+        team_override: pickedSlugs,
+        budget_cap_usd,
+      });
       window.location.href = `/?just=${r.id}`;
     } catch (e) {
       setError(String(e));
@@ -28,7 +53,7 @@ export default function NewReportPage() {
     <AuthGate>
       <div className="byline">Forte Research · New report</div>
       <h1 style={{ color: "var(--forte-navy)", marginTop: 4 }}>Commission a theme</h1>
-      <div className="card" style={{ maxWidth: 640 }}>
+      <div className="card" style={{ maxWidth: 720 }}>
         <p className="muted">Type a theme. The Editor-in-Chief writes a brief, the team researches, Data &amp; Charts builds the visualisations, the Editor edits, and the report is rendered to PDF.</p>
 
         <div style={{ marginBottom: 8 }}>
@@ -42,18 +67,49 @@ export default function NewReportPage() {
         </div>
 
         <div style={{ marginBottom: 16 }}>
-          <label className="byline">Mode</label>
-          <div style={{ display: "flex", gap: 12, marginTop: 4 }}>
-            <ModeOption
-              value="standard" active={mode === "standard"} onPick={setMode}
-              title="Standard"
-              tagline="Opus EIC + Sonnet team. Web search on. ~$0.50-1.00."
-            />
-            <ModeOption
-              value="fast" active={mode === "fast"} onPick={setMode}
-              title="Fast (testing)"
-              tagline="Haiku end-to-end. No web search. ~$0.05-0.15."
-            />
+          <label className="byline">Depth</label>
+          <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+            {MODES.map((m) => (
+              <ModeOption
+                key={m.value} value={m.value} active={mode === m.value} onPick={setMode}
+                title={m.title} tagline={m.tagline}
+              />
+            ))}
+          </div>
+        </div>
+
+        {team.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <label className="byline">Team override (optional)</label>
+            <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+              Leave all unticked to let the Editor-in-Chief decide.
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {team.map((m) => (
+                <label key={m.slug} style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer", fontSize: 14 }}>
+                  <input
+                    type="checkbox"
+                    checked={pickedSlugs.includes(m.slug)}
+                    onChange={() => toggleSlug(m.slug)}
+                    style={{ width: "auto" }}
+                  />
+                  <span><strong>{m.name}</strong> <span className="muted">— {m.role}</span></span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div style={{ marginBottom: 16 }}>
+          <label className="byline">Budget cap override (USD, optional)</label>
+          <input
+            type="number" step="0.10" min="0"
+            value={budgetText}
+            onChange={(e) => setBudgetText(e.target.value)}
+            placeholder="leave blank to use global cap from .env"
+          />
+          <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+            Useful for deep-dive runs that may exceed the default $1.00 cap.
           </div>
         </div>
 
@@ -65,7 +121,7 @@ export default function NewReportPage() {
 }
 
 function ModeOption({ value, active, onPick, title, tagline }: {
-  value: Mode; active: boolean; onPick: (m: Mode) => void;
+  value: ReportMode; active: boolean; onPick: (m: ReportMode) => void;
   title: string; tagline: string;
 }) {
   return (

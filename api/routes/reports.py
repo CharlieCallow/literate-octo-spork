@@ -21,6 +21,8 @@ class CreateReport(BaseModel):
     theme: str
     subtitle: str | None = None
     mode: ReportMode = ReportMode.standard
+    team_override: list[str] = []          # contributor slugs; empty = let EIC pick
+    budget_cap_usd: float | None = None    # overrides global per-report cap
 
 
 class ReportOut(BaseModel):
@@ -28,6 +30,8 @@ class ReportOut(BaseModel):
     theme: str
     subtitle: str | None
     mode: ReportMode
+    budget_cap_usd: float | None
+    team_override: list[str]
     stage: ReportStage
     error: str | None
     cost_usd: float
@@ -40,6 +44,8 @@ class ReportOut(BaseModel):
             theme=r.theme,
             subtitle=r.subtitle,
             mode=r.mode,
+            budget_cap_usd=r.budget_cap_usd,
+            team_override=list(r.team_override or []),
             stage=r.stage,
             error=r.error,
             cost_usd=r.cost_usd,
@@ -49,7 +55,17 @@ class ReportOut(BaseModel):
 
 @router.post("", response_model=ReportOut, dependencies=[Depends(require_auth)])
 def create(payload: CreateReport, session: Session = Depends(get_session)) -> ReportOut:
-    report = Report(theme=payload.theme, subtitle=payload.subtitle, mode=payload.mode)
+    # Filter team override against the actual roster.
+    from api.workflow.state_machine import ROSTER_BY_SLUG
+    team = [s for s in payload.team_override if s in ROSTER_BY_SLUG]
+
+    report = Report(
+        theme=payload.theme,
+        subtitle=payload.subtitle,
+        mode=payload.mode,
+        team_override=team,
+        budget_cap_usd=payload.budget_cap_usd,
+    )
     session.add(report)
     session.commit()
     session.refresh(report)
