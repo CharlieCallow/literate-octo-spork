@@ -79,6 +79,27 @@ export interface Job {
   finished_at: string | null;
 }
 
+export interface Theme {
+  id: number;
+  scout_run_id: number;
+  headline: string;
+  why_now: string;
+  dig_into: string;
+  source_urls: string[];
+  score: number;
+  surfaced_at: string;
+  commissioned_report_id: number | null;
+}
+
+export interface ScoutRun {
+  id: number;
+  started_at: string;
+  finished_at: string | null;
+  n_themes: number;
+  cost_usd: number;
+  error: string | null;
+}
+
 export const api = {
   listReports: () => req<Report[]>("/reports"),
   getReport: (id: number) => req<Report>(`/reports/${id}`),
@@ -89,5 +110,16 @@ export const api = {
   resume: (id: number) =>
     req<Report>(`/reports/${id}/resume`, { method: "POST" }),
   pdfUrl: (id: number) => `${API_BASE}/reports/${id}/pdf`,
+
+  // Scout
+  latestThemes: () => req<Theme[]>("/scout/themes"),
+  listScoutRuns: () => req<ScoutRun[]>("/scout/runs"),
+  kickScout: () => req<{ status: string }>("/scout/run", { method: "POST" }),
+  commissionTheme: (themeId: number, mode: ReportMode = "standard") =>
+    req<{ report_id: number; status: string }>(
+      `/scout/themes/${themeId}/commission`,
+      { method: "POST", body: JSON.stringify({ mode }) },
+    ),
+
   apiBase: () => API_BASE,
 };

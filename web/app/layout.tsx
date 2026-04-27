@@ -16,6 +16,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             <div className="accent" />
             <nav>
               <a href="/">Home</a>
+              <a href="/inbox">Inbox</a>
               <a href="/new">New report</a>
               <a href="/archive">Archive</a>
               <a href="/team">Team</a>

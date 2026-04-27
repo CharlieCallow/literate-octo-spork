@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.db import init_db
-from api.routes import health, reports, team
+from api.routes import health, reports, scout, team
 from api.settings import settings
 
 
@@ -36,3 +36,4 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(reports.router)
 app.include_router(team.router)
+app.include_router(scout.router)
