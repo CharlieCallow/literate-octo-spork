@@ -114,3 +114,28 @@ class Theme(SQLModel, table=True):
     score: float = 0.0
     surfaced_at: datetime = Field(default_factory=_now, index=True)
     commissioned_report_id: int | None = Field(default=None, foreign_key="reports.id")
+
+
+class RecommendationKind(str, Enum):
+    promote = "promote"  # move team/temp/<slug>.md -> team/<slug>.md
+    fire = "fire"        # move team/<slug>.md -> team/archive/<slug>.md
+
+
+class RecommendationStatus(str, Enum):
+    pending = "pending"
+    approved = "approved"
+    dismissed = "dismissed"
+
+
+class Recommendation(SQLModel, table=True):
+    __tablename__ = "recommendations"
+
+    id: int | None = Field(default=None, primary_key=True)
+    kind: RecommendationKind = Field(index=True)
+    subject_slug: str = Field(index=True)
+    subject_name: str
+    subject_role: str
+    reasoning: str
+    status: RecommendationStatus = Field(default=RecommendationStatus.pending, index=True)
+    created_at: datetime = Field(default_factory=_now)
+    resolved_at: datetime | None = None

@@ -12,7 +12,7 @@ from api.auth import require_auth
 from api.db import get_session
 from api.models import Report, ReportStage
 from api.settings import settings
-from api.workflow.state_machine import ROSTER, ROSTER_BY_SLUG
+from api.workflow.state_machine import get_roster, get_roster_map
 
 router = APIRouter(prefix="/team", tags=["team"])
 
@@ -51,7 +51,7 @@ def _stats_for(slug: str, session: Session) -> tuple[int, datetime | None]:
 @router.get("", response_model=list[Member], dependencies=[Depends(require_auth)])
 def list_team(session: Session = Depends(get_session)) -> list[Member]:
     out: list[Member] = []
-    for m in ROSTER:
+    for m in get_roster():
         n, last = _stats_for(m["slug"], session)
         out.append(Member(
             slug=m["slug"], name=m["name"], role=m["role"],
@@ -62,13 +62,13 @@ def list_team(session: Session = Depends(get_session)) -> list[Member]:
 
 @router.get("/{slug}", response_model=PersonaOut, dependencies=[Depends(require_auth)])
 def get_persona(slug: str, session: Session = Depends(get_session)) -> PersonaOut:
-    if slug not in ROSTER_BY_SLUG:
+    if slug not in get_roster_map():
         raise HTTPException(404, f"Unknown contributor: {slug}")
     persona_path = settings.team_dir / f"{slug}.md"
     if not persona_path.exists():
         raise HTTPException(404, f"Persona file missing: {persona_path.name}")
     n, last = _stats_for(slug, session)
-    m = ROSTER_BY_SLUG[slug]
+    m = get_roster_map()[slug]
     return PersonaOut(
         slug=slug,
         name=m["name"],
@@ -85,7 +85,7 @@ def update_persona(
     payload: PersonaUpdate,
     session: Session = Depends(get_session),
 ) -> PersonaOut:
-    if slug not in ROSTER_BY_SLUG:
+    if slug not in get_roster_map():
         raise HTTPException(404, f"Unknown contributor: {slug}")
     persona_path = settings.team_dir / f"{slug}.md"
     if not persona_path.exists():

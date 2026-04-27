@@ -37,6 +37,21 @@ export interface PersonaDetail {
   last_assignment_at: string | null;
 }
 
+export type RecKind = "promote" | "fire";
+export type RecStatus = "pending" | "approved" | "dismissed";
+
+export interface Recommendation {
+  id: number;
+  kind: RecKind;
+  subject_slug: string;
+  subject_name: string;
+  subject_role: string;
+  reasoning: string;
+  status: RecStatus;
+  created_at: string;
+  resolved_at: string | null;
+}
+
 export interface CreateReportPayload {
   theme: string;
   subtitle?: string;
@@ -120,6 +135,15 @@ export const api = {
   getPersona: (slug: string) => req<PersonaDetail>(`/team/${slug}`),
   updatePersona: (slug: string, markdown: string) =>
     req<PersonaDetail>(`/team/${slug}`, { method: "PUT", body: JSON.stringify({ markdown }) }),
+
+  // Recruiter
+  kickRecruiterReview: () => req<{ added: number }>("/recruiter/review", { method: "POST" }),
+  listRecommendations: (status: RecStatus | "all" = "pending") =>
+    req<Recommendation[]>(status === "all" ? "/recruiter/recommendations" : `/recruiter/recommendations?status=${status}`),
+  approveRecommendation: (id: number) =>
+    req<Recommendation>(`/recruiter/recommendations/${id}/approve`, { method: "POST" }),
+  dismissRecommendation: (id: number) =>
+    req<Recommendation>(`/recruiter/recommendations/${id}/dismiss`, { method: "POST" }),
   createReport: (p: CreateReportPayload) =>
     req<Report>("/reports", { method: "POST", body: JSON.stringify(p) }),
   resume: (id: number) =>

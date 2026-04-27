@@ -56,8 +56,9 @@ class ReportOut(BaseModel):
 @router.post("", response_model=ReportOut, dependencies=[Depends(require_auth)])
 def create(payload: CreateReport, session: Session = Depends(get_session)) -> ReportOut:
     # Filter team override against the actual roster.
-    from api.workflow.state_machine import ROSTER_BY_SLUG
-    team = [s for s in payload.team_override if s in ROSTER_BY_SLUG]
+    from api.workflow.state_machine import get_roster_map
+    roster_map = get_roster_map()
+    team = [s for s in payload.team_override if s in roster_map]
 
     report = Report(
         theme=payload.theme,

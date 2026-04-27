@@ -5,6 +5,7 @@ a stage overwrites its output and does not corrupt earlier stages."""
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import date
 from pathlib import Path
@@ -23,6 +24,8 @@ from api.render.pdf import Contributor, Section, render_pdf
 from api.settings import settings
 from api.workflow.audit import audit_hook
 
+log = logging.getLogger("workflow")
+
 STAGE_ORDER: list[ReportStage] = [
     ReportStage.brief,
     ReportStage.recruit,
@@ -37,20 +40,41 @@ STAGE_ORDER: list[ReportStage] = [
 
 
 # ---------------------------------------------------------------------------
-# Roster — analysts the EIC can put on a report.
-# Slugs match the persona filename without `.md`. Names are display names used
-# on the cover page and section bylines.
+# Roster -- analysts the EIC can put on a report.
+# Derived from team/*.md at call time. The standing-team files live in
+# settings.team_dir; ad-hoc temps live in settings.team_dir / "temp".
+# Excludes the orchestrator personas (EIC, Scout, Recruiter, Data & Charts).
 # ---------------------------------------------------------------------------
 
-ROSTER: list[dict[str, str]] = [
-    {"slug": "macro-strategist", "name": "Henrik Voss",  "role": "Macro Strategist"},
-    {"slug": "equity-analyst",   "name": "Priya Anand",  "role": "Equity / Sector Analyst"},
-]
-
-ROSTER_BY_SLUG: dict[str, dict[str, str]] = {c["slug"]: c for c in ROSTER}
+# Slugs that are agents-with-roles, not contributors. They have personas but
+# don't appear in the roster pickers.
+_NON_ROSTER_SLUGS = {"editor-in-chief", "data-and-charts", "scout", "recruiter"}
 
 EIC_DISPLAY = {"name": "Margaux Devlin", "role": "Editor-in-Chief"}
 DC_DISPLAY  = {"name": "Tomás Reyes",    "role": "Data & Charts"}
+
+
+def get_roster() -> list[dict[str, str]]:
+    """Read the active analyst roster from team/*.md.
+    Re-read each call so promotions / firings take effect immediately."""
+    out: list[dict[str, str]] = []
+    if not settings.team_dir.exists():
+        return out
+    for p in sorted(settings.team_dir.glob("*.md")):
+        slug = p.stem
+        if slug in _NON_ROSTER_SLUGS:
+            continue
+        text = p.read_text(encoding="utf-8")
+        m = _HEADER_RE.search(text)
+        if m:
+            out.append({"slug": slug, "name": m.group("name").strip(), "role": m.group("role").strip()})
+        else:
+            out.append({"slug": slug, "name": slug.replace("-", " ").title(), "role": "Analyst"})
+    return out
+
+
+def get_roster_map() -> dict[str, dict[str, str]]:
+    return {c["slug"]: c for c in get_roster()}
 
 
 def working_dir(report_id: int) -> Path:
@@ -162,9 +186,10 @@ _HEADER_RE = re.compile(r"^#\s+(?P<name>.+?)\s+(?:—|-+)\s+(?P<role>.+)$", re.M
 
 def _persona_meta(slug: str) -> dict[str, str] | None:
     """Read the #-heading line from a persona file to derive name + role.
-    Falls back to the standing ROSTER for known slugs."""
-    if slug in ROSTER_BY_SLUG:
-        return ROSTER_BY_SLUG[slug]
+    Standing-roster slugs short-circuit through get_roster_map()."""
+    roster = get_roster_map()
+    if slug in roster:
+        return roster[slug]
     p = _persona_path(slug)
     if p is None:
         return None
@@ -202,7 +227,7 @@ def _resolved_contributors(report: Report, brief: str) -> list[dict[str, str]]:
             slugs.append(s)
 
     valid = [m for s in slugs if (m := _persona_meta(s))]
-    return valid or list(ROSTER)
+    return valid or get_roster()
 
 
 def run_stage(report: Report, stage: ReportStage) -> ReportStage:
@@ -220,7 +245,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         result = eic.write_brief(
             report.theme,
             subtitle=report.subtitle,
-            available_contributors=ROSTER,
+            available_contributors=get_roster(),
         )
         _write(wd / "brief.md", result.text)
 
@@ -410,6 +435,14 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             log_entries.append(f"## {c['name']}\n\n{fb.text}\n")
 
         _write(wd / "feedback.md", "\n\n---\n\n".join(log_entries) or "_No feedback written._\n")
+
+        # After feedback lands, refresh the recruiter's recommendation queue.
+        # Best-effort -- don't fail the report if the review hits a snag.
+        try:
+            from api.recruiter_review import refresh_recommendations
+            refresh_recommendations()
+        except Exception:  # noqa: BLE001
+            log.exception("recruiter review failed (non-blocking)")
         return _next_stage(stage)
 
     return ReportStage.done
