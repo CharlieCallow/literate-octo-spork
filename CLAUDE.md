@@ -41,6 +41,14 @@ Read [PROJECT.md](./PROJECT.md) at the start of every session before writing or 
 - Use the cost estimate to surface a confirm dialog before a report kicks off
   *(done)*
 - Bump Next.js past 15.0.x for the security CVE flagged at deploy time
+- **Elapsed/ETA look wrong on running reports.** Likely cause: SQLAlchemy maps
+  `datetime` fields to `TIMESTAMP` (not `TIMESTAMPTZ`) on Postgres, so tz info
+  is stripped on round-trip. Pydantic then serialises a naive ISO string and
+  the browser parses it as local time. Fix paths:
+  (a) one-line: re-attach UTC in `ReportOut.from_db()` before serialisation
+  (b) proper: switch the column to `TIMESTAMPTZ` via `sa_type=DateTime(timezone=True)`
+  on every `created_at`/`finished_at`/etc. field, plus a migration.
+  (a) ships immediately; (b) is the right long-term call.
 
 ## Session log
 
