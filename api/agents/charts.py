@@ -22,25 +22,35 @@ class DataAndCharts(Agent):
         )
 
     def build(self, brief: str, notes: str, charts_dir: Path) -> AgentResult:
-        prompt = f"""You're the Data & Charts agent on a Forte Research report. The brief and the analyst notes are below. Pick ONE chart that would land hardest, generate it via the make_chart tool (Forte house style is applied automatically), then write a short data section.
+        prompt = f"""You're the Data & Charts agent on a Forte Research report. The brief lists chart ideas under '# CHARTS' and the analyst notes are below. Generate 2-3 charts that land hardest, then write the data section.
 
 BRIEF:
 
 {brief}
 
-NOTES:
+ANALYST NOTES:
 
 {notes}
 
 Workflow:
-1. Use fred_series first if you need to scout a series.
-2. Call make_chart EXACTLY ONCE, with chart_kind='line' or 'bar', a title (12-15 words, descriptive), a subtitle (one short sentence, the angle), a clean filename like 'rates.png', and a series_id.
+
+1. Read the brief's CHARTS section. Generate 2-3 charts (no more, no less). Use fred_series first if you need to scout a series.
+
+2. Call make_chart 2-3 times, once per chart. For each:
+   - chart_kind: 'line' or 'bar'
+   - series_id: a FRED series ID
+   - title: 8-15 words, descriptive
+   - subtitle: one short sentence, the angle
+   - filename: short and unique, e.g. 'rates.png', 'cpi.png', 'unemployment.png'
+
 3. Then output a markdown section in your voice:
    - Start with `## Data & charts`.
-   - Include `[chart: <filename>]` on its own line where the chart goes.
-   - 150-250 words of commentary. Terse. Two sentences and a number. Drop one dry one-liner.
+   - For EACH chart you generated, write a short paragraph (60-120 words) of commentary.
+     Place `[chart: <filename>]` on its own line at the START of each paragraph so the chart appears above its commentary.
+   - Terse. Two sentences and a number per chart. Drop one dry one-liner across the section.
+   - Total length 200-400 words.
 
-Do not make multiple charts in M1 — exactly one.
+Do not invent data. Every claim cites a number from a FRED series you actually fetched.
 """
         tools: list[Tool] = [fred_series_tool(), make_chart_tool(charts_dir)]
-        return self.run(prompt, tools=tools, max_tokens=2048)
+        return self.run(prompt, tools=tools, max_tokens=3072, max_iters=10)
