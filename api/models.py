@@ -87,3 +87,28 @@ class DataCache(SQLModel, table=True):
     query_hash: str = Field(index=True)
     fetched_at: datetime = Field(default_factory=_now)
     payload: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+
+
+class ScoutRun(SQLModel, table=True):
+    __tablename__ = "scout_runs"
+
+    id: int | None = Field(default=None, primary_key=True)
+    started_at: datetime = Field(default_factory=_now, index=True)
+    finished_at: datetime | None = None
+    n_themes: int = 0
+    cost_usd: float = 0.0
+    error: str | None = None
+
+
+class Theme(SQLModel, table=True):
+    __tablename__ = "themes"
+
+    id: int | None = Field(default=None, primary_key=True)
+    scout_run_id: int = Field(foreign_key="scout_runs.id", index=True)
+    headline: str
+    why_now: str = ""
+    dig_into: str = ""
+    source_urls: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    score: float = 0.0
+    surfaced_at: datetime = Field(default_factory=_now, index=True)
+    commissioned_report_id: int | None = Field(default=None, foreign_key="reports.id")

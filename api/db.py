@@ -40,6 +40,8 @@ def _migrate_sqlite() -> None:
         # M2 sprint 4: per-report budget + team override
         ("reports", "ALTER TABLE reports ADD COLUMN budget_cap_usd REAL"),
         ("reports", "ALTER TABLE reports ADD COLUMN team_override JSON DEFAULT '[]'"),
+        # M3: Scout themes are linked back to the report they spawn
+        ("themes",  "ALTER TABLE themes ADD COLUMN commissioned_report_id INTEGER"),
     ]
     with engine.connect() as conn:
         for _table, sql in additions:

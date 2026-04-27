@@ -193,6 +193,6 @@ def make_chart_tool(out_dir: Path) -> Tool:
 
 # ---------- Anthropic-managed web search (server-side) ----------
 
-def web_search_tool() -> dict[str, Any]:
+def web_search_tool(max_uses: int = 5) -> dict[str, Any]:
     """Anthropic-managed web search. Pass via Agent.run(server_tools=[web_search_tool()])."""
-    return {"type": "web_search_20250305", "name": "web_search", "max_uses": 5}
+    return {"type": "web_search_20250305", "name": "web_search", "max_uses": max_uses}
