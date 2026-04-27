@@ -45,7 +45,12 @@ app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
 # Comma-separated origin URLs allowed to call the API. Configure via env var
 # CORS_ORIGINS. Local dev defaults cover :3000; add your Vercel URL on Railway.
-_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+# Trailing slashes are stripped so the env var is forgiving.
+_origins = [
+    o.strip().rstrip("/")
+    for o in settings.cors_origins.split(",")
+    if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
