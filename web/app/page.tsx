@@ -1,12 +1,15 @@
 import { AuthGate } from "@/components/Auth";
-import { ReportList } from "@/components/ReportList";
+import { LatestReport } from "@/components/LatestReport";
 
 export default function Home() {
   return (
     <AuthGate>
       <div className="byline">Forte Research · Home</div>
-      <h1 style={{ color: "var(--forte-navy)", marginTop: 4 }}>Latest</h1>
-      <ReportList />
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+        <h1 style={{ color: "var(--forte-navy)", marginTop: 4 }}>Latest</h1>
+        <a href="/archive" style={{ fontSize: 13 }}>View archive →</a>
+      </div>
+      <LatestReport />
     </AuthGate>
   );
 }
