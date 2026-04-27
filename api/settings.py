@@ -36,6 +36,13 @@ class Settings(BaseSettings):
 
     reports_dir: Path = REPO_ROOT / "reports"
 
+    # M3: Scout daily digest scheduling + email delivery
+    scout_auto_run: bool = False
+    scout_daily_time: str = "07:00"  # HH:MM local time
+    resend_api_key: str = ""
+    scout_digest_email: str = ""
+    scout_digest_from: str = "Forte Research <onboarding@resend.dev>"
+
     @field_validator("model_haiku", "model_sonnet", "model_opus", mode="before")
     @classmethod
     def _clean_model_name(cls, v: object) -> object:

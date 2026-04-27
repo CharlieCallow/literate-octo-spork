@@ -97,6 +97,25 @@ Each report runs through stages:
 
 PDF lands embedded in the dashboard and on disk at `reports/<id>/report.pdf`.
 
+## Daily Scout digest
+
+Scout (the morning-scan agent) can run automatically every day. Toggle via `.env`:
+
+```
+SCOUT_AUTO_RUN=true
+SCOUT_DAILY_TIME=07:00            # local HH:MM
+RESEND_API_KEY=re_...              # optional; leave blank to skip email
+SCOUT_DIGEST_EMAIL=you@you.com     # destination for the daily digest
+```
+
+The worker checks the schedule on each idle tick and fires `run_scout()` once per day past the configured time. If `RESEND_API_KEY` is configured the digest also lands in your inbox; otherwise it's just available at `/inbox` in the dashboard.
+
+You can trigger a digest manually any time with the **Run Scout now** button on the Inbox page or:
+
+```bash
+python -m scripts.scout_now
+```
+
 ## Cost guardrails
 
 Hard caps in `.env`:

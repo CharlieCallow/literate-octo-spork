@@ -1,6 +1,8 @@
 """Polling worker. Run as a separate process: `python -m api.workflow.worker`.
 
-Catches SIGINT and SIGTERM so it can finish the current job before exiting."""
+Catches SIGINT and SIGTERM so it can finish the current job before exiting.
+Also fires the daily Scout digest if SCOUT_AUTO_RUN is on and the configured
+local time has passed today."""
 
 from __future__ import annotations
 
@@ -8,9 +10,11 @@ import contextlib
 import logging
 import signal
 import time
+from datetime import datetime
 from types import FrameType
 
 from api.db import init_db
+from api.scout_runner import parse_hhmm, run_scout, should_run_today
 from api.settings import settings
 from api.workflow.runner import claim_one_job, execute
 
@@ -25,6 +29,24 @@ def _request_shutdown(signum: int, _frame: FrameType | None) -> None:
     logging.getLogger("worker").info("signal %d received -- finishing current job and exiting", signum)
 
 
+def _maybe_run_scheduled_scout(log: logging.Logger) -> None:
+    if not settings.scout_auto_run:
+        return
+    target = parse_hhmm(settings.scout_daily_time)
+    if target is None:
+        log.warning("invalid SCOUT_DAILY_TIME=%r; auto-run disabled", settings.scout_daily_time)
+        return
+    if datetime.now().time() < target:
+        return
+    if not should_run_today():
+        return
+    log.info("scheduled Scout digest kicking off (target=%s)", settings.scout_daily_time)
+    try:
+        run_scout()
+    except Exception:  # noqa: BLE001
+        log.exception("scheduled Scout digest failed")
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s -- %(message)s")
     init_db()
@@ -36,6 +58,8 @@ def main() -> None:
     )
     if not settings.anthropic_api_key:
         log.error("ANTHROPIC_API_KEY is empty -- agent calls will fail")
+    if settings.scout_auto_run:
+        log.info("scout auto-run enabled; daily target=%s", settings.scout_daily_time)
 
     signal.signal(signal.SIGINT, _request_shutdown)
     with contextlib.suppress(AttributeError, ValueError):
@@ -44,6 +68,7 @@ def main() -> None:
     while not _should_stop:
         job = claim_one_job()
         if job is None:
+            _maybe_run_scheduled_scout(log)
             for _ in range(int(POLL_INTERVAL_S * 10)):
                 if _should_stop:
                     break
