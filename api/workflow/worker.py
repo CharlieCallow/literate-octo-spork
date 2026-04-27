@@ -6,16 +6,23 @@ import logging
 import time
 
 from api.db import init_db
+from api.settings import settings
 from api.workflow.runner import claim_one_job, execute
 
 POLL_INTERVAL_S = 3.0
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s -- %(message)s")
     init_db()
     log = logging.getLogger("worker")
     log.info("worker started")
+    log.info(
+        "models loaded: haiku=%r  sonnet=%r  opus=%r",
+        settings.model_haiku, settings.model_sonnet, settings.model_opus,
+    )
+    if not settings.anthropic_api_key:
+        log.error("ANTHROPIC_API_KEY is empty -- agent calls will fail")
     while True:
         job = claim_one_job()
         if job is None:

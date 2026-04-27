@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -34,6 +35,15 @@ class Settings(BaseSettings):
     fred_api_key: str = ""
 
     reports_dir: Path = REPO_ROOT / "reports"
+
+    @field_validator("model_haiku", "model_sonnet", "model_opus", mode="before")
+    @classmethod
+    def _clean_model_name(cls, v: object) -> object:
+        # Strip inline comments and whitespace from .env values.
+        if not isinstance(v, str):
+            return v
+        v = v.split("#", 1)[0].strip()
+        return v
 
     @property
     def assets_dir(self) -> Path:
