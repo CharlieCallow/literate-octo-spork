@@ -104,11 +104,17 @@ def render_pdf(
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Write HTML alongside the PDF and load it via file:// so Chromium can
+    # resolve <img src="file://..."> references. set_content() leaves the
+    # page origin as about:blank, which blocks file:// image loads.
+    html_path = out_path.with_suffix(".html")
+    html_path.write_text(html, encoding="utf-8")
+
     with sync_playwright() as p:
         browser = p.chromium.launch()
         ctx = browser.new_context()
         page = ctx.new_page()
-        page.set_content(html, wait_until="networkidle")
+        page.goto(html_path.as_uri(), wait_until="networkidle")
         page.emulate_media(media="print")
         page.pdf(
             path=str(out_path),
