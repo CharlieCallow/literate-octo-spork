@@ -23,6 +23,18 @@ export interface TeamMember {
   slug: string;
   name: string;
   role: string;
+  reports_contributed: number;
+  last_assignment_at: string | null;
+  rewrite_ratio: number | null;
+}
+
+export interface PersonaDetail {
+  slug: string;
+  name: string;
+  role: string;
+  markdown: string;
+  reports_contributed: number;
+  last_assignment_at: string | null;
 }
 
 export interface CreateReportPayload {
@@ -105,6 +117,9 @@ export const api = {
   getReport: (id: number) => req<Report>(`/reports/${id}`),
   listJobs: (id: number) => req<Job[]>(`/reports/${id}/jobs`),
   listTeam: () => req<TeamMember[]>("/team"),
+  getPersona: (slug: string) => req<PersonaDetail>(`/team/${slug}`),
+  updatePersona: (slug: string, markdown: string) =>
+    req<PersonaDetail>(`/team/${slug}`, { method: "PUT", body: JSON.stringify({ markdown }) }),
   createReport: (p: CreateReportPayload) =>
     req<Report>("/reports", { method: "POST", body: JSON.stringify(p) }),
   resume: (id: number) =>

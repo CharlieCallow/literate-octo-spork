@@ -42,6 +42,8 @@ def _migrate_sqlite() -> None:
         ("reports", "ALTER TABLE reports ADD COLUMN team_override JSON DEFAULT '[]'"),
         # M3: Scout themes are linked back to the report they spawn
         ("themes",  "ALTER TABLE themes ADD COLUMN commissioned_report_id INTEGER"),
+        # M4: contributor_slugs records who actually worked on the report
+        ("reports", "ALTER TABLE reports ADD COLUMN contributor_slugs JSON DEFAULT '[]'"),
     ]
     with engine.connect() as conn:
         for _table, sql in additions:

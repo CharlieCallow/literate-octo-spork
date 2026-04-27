@@ -180,16 +180,21 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             available_contributors=ROSTER,
         )
         _write(wd / "brief.md", result.text)
-        # Lift subtitle out of the brief if user didn't supply one.
-        if not report.subtitle:
-            sub = parse_brief(result.text).get("subtitle")
-            if sub:
-                with Session(engine) as session:
-                    r = session.get(Report, report.id)
-                    if r and not r.subtitle:
-                        r.subtitle = sub
-                        session.add(r)
-                        session.commit()
+
+        # Resolve contributors now and persist them so /team can compute stats
+        # without re-parsing every brief later.
+        resolved = _resolved_contributors(report, result.text)
+        slugs = [c["slug"] for c in resolved]
+        with Session(engine) as session:
+            r = session.get(Report, report.id)
+            if r:
+                r.contributor_slugs = slugs
+                if not r.subtitle:
+                    sub = parse_brief(result.text).get("subtitle")
+                    if sub:
+                        r.subtitle = str(sub)
+                session.add(r)
+                session.commit()
         _record(report.id, wd, result)
         return _next_stage(stage)
 

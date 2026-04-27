@@ -42,6 +42,7 @@ class Report(SQLModel, table=True):
     mode: ReportMode = Field(default=ReportMode.standard)
     budget_cap_usd: float | None = None  # overrides settings.cost_per_report_usd if set
     team_override: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    contributor_slugs: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
     stage: ReportStage = Field(default=ReportStage.queued, index=True)
     error: str | None = None
     pdf_path: str | None = None
