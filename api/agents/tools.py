@@ -14,7 +14,6 @@ from api.data import edgar, fred, wikipedia
 from api.data import yfinance as yf_data
 from api.render import charts as chart_helpers
 
-
 # ---------- FRED ----------
 
 def fred_series_tool() -> Tool:

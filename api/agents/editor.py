@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from api.agents.base import Agent, AgentResult
 from api.agents.cost import CostTracker
 from api.settings import settings

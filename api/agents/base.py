@@ -4,6 +4,7 @@ via an audit hook."""
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import time
@@ -238,10 +239,8 @@ class Agent:
                 if resp is not None:
                     ra = resp.headers.get("retry-after")
                     if ra:
-                        try:
+                        with contextlib.suppress(ValueError):
                             wait = min(int(ra), 65)
-                        except ValueError:
-                            pass
                 log.warning(
                     "agent=%s rate-limited; sleeping %ss (attempt %d/%d)",
                     self.slug, wait, i + 1, attempts,

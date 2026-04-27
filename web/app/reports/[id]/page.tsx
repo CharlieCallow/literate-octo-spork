@@ -1,8 +1,10 @@
 "use client";
-import { use, useEffect, useState } from "react";
+import { memo, use, useEffect, useState } from "react";
 import { AuthGate } from "@/components/Auth";
 import { StageBreakdown } from "@/components/StageBreakdown";
 import { api, type Job, type Report } from "@/lib/api";
+
+const TERMINAL_STAGES = new Set(["done", "failed"]);
 
 export default function ReportPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -14,6 +16,7 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
 
   useEffect(() => {
     let alive = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const tick = async () => {
       try {
         const r = await api.getReport(reportId);
@@ -24,10 +27,13 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
       } catch (e) {
         if (alive) setError(String(e));
       }
+      if (!alive) return;
+      const interval = report && TERMINAL_STAGES.has(report.stage) ? 30_000 : 3_000;
+      timer = setTimeout(tick, interval);
     };
     tick();
-    const t = setInterval(tick, 3000);
-    return () => { alive = false; clearInterval(t); };
+    return () => { alive = false; if (timer) clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reportId]);
 
   async function resume() {
@@ -79,10 +85,7 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
           {report.pdf_url ? (
             <div className="card">
               <div className="byline">PDF</div>
-              <iframe
-                src={api.pdfUrl(report.id)}
-                style={{ width: "100%", height: "85vh", border: 0 }}
-              />
+              <PdfFrame reportId={report.id} />
               <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
                 <a href={api.pdfUrl(report.id)}>Download PDF</a>
               </p>
@@ -97,3 +100,12 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
     </AuthGate>
   );
 }
+
+const PdfFrame = memo(function PdfFrame({ reportId }: { reportId: number }) {
+  return (
+    <iframe
+      src={api.pdfUrl(reportId)}
+      style={{ width: "100%", height: "85vh", border: 0 }}
+    />
+  );
+});

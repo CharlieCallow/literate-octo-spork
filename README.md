@@ -69,10 +69,20 @@ Confirms the rendering layer works without burning API credits:
 
 ```bash
 python -m scripts.smoke_render
-# -> smoke-out/report.pdf, smoke-out/chart.png
+# -> smoke-out/report.pdf, smoke-out/charts/*.png
 ```
 
-Open `smoke-out/report.pdf` — you should see a 2-page PDF with the Forte cover, sample sections, navy callouts, and house style.
+Open `smoke-out/report.pdf` — you should see a multi-page PDF with the Forte cover, four contributors, three charts inline, navy callouts, and a Sources section.
+
+## Tests + lint
+
+```bash
+pip install -e ".[dev]"
+pytest        # ~30 unit tests, ~3s
+ruff check    # style + import order
+```
+
+CI runs the same on every PR (`.github/workflows/ci.yml`) plus a Next.js typecheck + build.
 
 ## Generate a report
 

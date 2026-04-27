@@ -1,7 +1,9 @@
 "use client";
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { api, type Job, type Report } from "@/lib/api";
 import { StageBreakdown } from "./StageBreakdown";
+
+const TERMINAL_STAGES = new Set(["done", "failed"]);
 
 export function LatestReport() {
   const [report, setReport] = useState<Report | null>(null);
@@ -10,24 +12,38 @@ export function LatestReport() {
 
   useEffect(() => {
     let alive = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
     const tick = async () => {
       try {
         const list = await api.listReports();
         if (!alive) return;
         if (list.length === 0) {
           setReport(null);
-          return;
+        } else {
+          setReport(list[0]);
+          const js = await api.listJobs(list[0].id);
+          if (alive) setJobs(js);
         }
-        setReport(list[0]);
-        const js = await api.listJobs(list[0].id);
-        if (alive) setJobs(js);
       } catch (e) {
         if (alive) setError(String(e));
       }
+
+      // Schedule the next poll ourselves so we can stop once the report
+      // is in a terminal state (done/failed). Stops the iframe being
+      // re-evaluated and the PDF re-fetched every 3s.
+      if (!alive) return;
+      const stage = report?.stage;
+      const interval = stage && TERMINAL_STAGES.has(stage) ? 30_000 : 3_000;
+      timer = setTimeout(tick, interval);
     };
+
     tick();
-    const t = setInterval(tick, 3000);
-    return () => { alive = false; clearInterval(t); };
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function resume(id: number) {
@@ -58,9 +74,18 @@ export function LatestReport() {
 
       {jobs.length > 0 && <StageBreakdown jobs={jobs} />}
 
-      {report.pdf_url && (
-        <iframe src={api.pdfUrl(report.id)} style={{ width: "100%", height: 720, border: 0, marginTop: 12 }} />
-      )}
+      {report.pdf_url && <PdfFrame reportId={report.id} />}
     </div>
   );
 }
+
+// Memoized so polling re-renders of <LatestReport /> don't re-mount the iframe
+// (which would force Chromium to re-fetch the whole PDF on every tick).
+const PdfFrame = memo(function PdfFrame({ reportId }: { reportId: number }) {
+  return (
+    <iframe
+      src={api.pdfUrl(reportId)}
+      style={{ width: "100%", height: 720, border: 0, marginTop: 12 }}
+    />
+  );
+});

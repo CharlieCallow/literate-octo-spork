@@ -55,3 +55,22 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "SIM"]
 ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# FastAPI idiom: Depends() in default args is intentional, not a B008 violation.
+"api/routes/*.py" = ["B008"]
+"api/auth.py" = ["B008"]
+# UP042 wants StrEnum; (str, Enum) inheritance still has different runtime
+# semantics in libraries we depend on. N818 wants Error suffixes; we keep
+# BudgetExceeded short and idiomatic.
+"api/models.py" = ["UP042"]
+"api/agents/cost.py" = ["N818"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+addopts = "-q --strict-markers"
+filterwarnings = [
+  "ignore::DeprecationWarning:pydantic.*",
+  "ignore::DeprecationWarning:websockets.*",
+]

@@ -188,7 +188,8 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
                     r = session.get(Report, report.id)
                     if r and not r.subtitle:
                         r.subtitle = sub
-                        session.add(r); session.commit()
+                        session.add(r)
+                        session.commit()
         _record(report.id, wd, result)
         return _next_stage(stage)
 

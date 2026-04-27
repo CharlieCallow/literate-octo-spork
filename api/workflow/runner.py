@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import traceback
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlmodel import Session, select
 
@@ -23,7 +23,7 @@ BACKOFF_BASE_S = 2  # 2s, 4s, 8s
 
 def claim_one_job() -> Job | None:
     """Pop the oldest pending job whose run_after window has elapsed."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with Session(engine) as session:
         job = session.exec(
             select(Job)
@@ -70,7 +70,7 @@ def execute(job: Job) -> None:
             session.add(r)
         if j:
             j.status = "done"
-            j.finished_at = datetime.now(timezone.utc)
+            j.finished_at = datetime.now(UTC)
             j.cost_usd = (r.cost_usd if r else cost_at_start) - cost_at_start
             session.add(j)
         if next_stage != ReportStage.done:
@@ -82,7 +82,7 @@ def _handle_failure(job: Job, e: Exception) -> None:
     """Mark job failed; retry with backoff if we have attempts left, else fail report."""
     err = f"{type(e).__name__}: {e}"
     tb = traceback.format_exc()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     with Session(engine) as session:
         j = session.get(Job, job.id)
@@ -119,6 +119,6 @@ def _handle_failure(job: Job, e: Exception) -> None:
 def _fail_job(session: Session, job: Job, msg: str) -> None:
     job.status = "failed"
     job.last_error = msg
-    job.finished_at = datetime.now(timezone.utc)
+    job.finished_at = datetime.now(UTC)
     session.add(job)
     session.commit()

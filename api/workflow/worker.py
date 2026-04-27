@@ -4,6 +4,7 @@ Catches SIGINT and SIGTERM so it can finish the current job before exiting."""
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import signal
 import time
@@ -37,10 +38,8 @@ def main() -> None:
         log.error("ANTHROPIC_API_KEY is empty -- agent calls will fail")
 
     signal.signal(signal.SIGINT, _request_shutdown)
-    try:
-        signal.signal(signal.SIGTERM, _request_shutdown)
-    except (AttributeError, ValueError):
-        pass  # SIGTERM not supported on Windows main thread
+    with contextlib.suppress(AttributeError, ValueError):
+        signal.signal(signal.SIGTERM, _request_shutdown)  # not on Windows main thread
 
     while not _should_stop:
         job = claim_one_job()

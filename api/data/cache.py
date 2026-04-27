@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlmodel import Session, select
@@ -20,7 +20,7 @@ def _hash(query: dict[str, Any]) -> str:
 
 def get_cached(source: str, query: dict[str, Any], ttl: timedelta) -> dict[str, Any] | None:
     qh = _hash(query)
-    cutoff = datetime.now(timezone.utc) - ttl
+    cutoff = datetime.now(UTC) - ttl
     with Session(engine) as session:
         row = session.exec(
             select(DataCache).where(

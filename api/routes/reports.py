@@ -38,7 +38,7 @@ class ReportOut(BaseModel):
     pdf_url: str | None
 
     @classmethod
-    def from_db(cls, r: Report) -> "ReportOut":
+    def from_db(cls, r: Report) -> ReportOut:
         return cls(
             id=r.id or 0,
             theme=r.theme,
@@ -98,7 +98,18 @@ def get_pdf(report_id: int, session: Session = Depends(get_session)) -> FileResp
     path = Path(report.pdf_path)
     if not path.exists():
         raise HTTPException(404, "PDF missing on disk")
-    return FileResponse(path, media_type="application/pdf", filename=path.name)
+    return FileResponse(
+        path,
+        media_type="application/pdf",
+        filename=path.name,
+        headers={
+            # Inline so the browser embeds it instead of prompting download.
+            "Content-Disposition": f'inline; filename="{path.name}"',
+            # Cache aggressively while a report exists -- PDFs are immutable
+            # once written. Stops the iframe re-fetching every poll tick.
+            "Cache-Control": "private, max-age=3600",
+        },
+    )
 
 
 class JobOut(BaseModel):
