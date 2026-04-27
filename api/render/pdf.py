@@ -102,6 +102,7 @@ def render_pdf(
         css_path=(STYLES_DIR / "report.css").as_uri(),
     )
 
+    out_path = out_path.resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Write HTML alongside the PDF and load it via file:// so Chromium can
