@@ -62,14 +62,14 @@ class Agent:
 
     @property
     def display_name(self) -> str:
-        text = self.persona_path.read_text()
+        text = self.persona_path.read_text(encoding="utf-8")
         for line in text.splitlines():
             if line.startswith("# "):
                 return line[2:].strip()
         return self.slug
 
     def _system_prompt(self, extra: str = "") -> str:
-        persona = self.persona_path.read_text()
+        persona = self.persona_path.read_text(encoding="utf-8")
         return persona + ("\n\n---\n\n" + extra if extra else "")
 
     def run(

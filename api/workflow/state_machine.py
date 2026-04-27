@@ -40,7 +40,11 @@ def working_dir(report_id: int) -> Path:
 
 
 def _read(p: Path) -> str:
-    return p.read_text() if p.exists() else ""
+    return p.read_text(encoding="utf-8") if p.exists() else ""
+
+
+def _write(p: Path, text: str) -> None:
+    p.write_text(text, encoding="utf-8")
 
 
 def _today_spent() -> float:
@@ -85,7 +89,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
     if stage == ReportStage.brief:
         eic = EditorInChief(cost, audit=audit)
         result = eic.write_brief(report.theme, subtitle=report.subtitle)
-        (wd / "brief.md").write_text(result.text)
+        _write(wd / "brief.md", result.text)
         _persist_cost(report.id, result.cost_usd)
         return _next_stage(stage)
 
@@ -93,7 +97,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         macro = Analyst("macro-strategist.md", cost, audit=audit)
         brief = _read(wd / "brief.md")
         result = macro.research(brief, report.theme, wd)
-        (wd / "notes-macro.md").write_text(result.text)
+        _write(wd / "notes-macro.md", result.text)
         _persist_cost(report.id, result.cost_usd)
         return _next_stage(stage)
 
@@ -102,7 +106,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         brief = _read(wd / "brief.md")
         notes = _read(wd / "notes-macro.md")
         result = dc.build(brief, notes, wd / "charts")
-        (wd / "data-section.md").write_text(result.text)
+        _write(wd / "data-section.md", result.text)
         _persist_cost(report.id, result.cost_usd)
         return _next_stage(stage)
 
@@ -111,7 +115,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         brief = _read(wd / "brief.md")
         notes = _read(wd / "notes-macro.md")
         result = macro.draft(brief, notes, report.theme)
-        (wd / "section-macro.md").write_text(result.text)
+        _write(wd / "section-macro.md", result.text)
         _persist_cost(report.id, result.cost_usd)
         return _next_stage(stage)
 
@@ -134,7 +138,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         ]
         chart_summary = _list_charts(wd / "charts")
         result = eic.edit(brief=brief, sections=sections, chart_summary=chart_summary)
-        (wd / "edited.md").write_text(result.text)
+        _write(wd / "edited.md", result.text)
         _persist_cost(report.id, result.cost_usd)
         return _next_stage(stage)
 
@@ -167,7 +171,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
 
     if stage == ReportStage.feedback:
         # M4 — for now just leave a placeholder log entry.
-        (wd / "feedback.md").write_text("_Feedback log lands in M4._\n")
+        _write(wd / "feedback.md", "_Feedback log lands in M4._\n")
         return _next_stage(stage)
 
     return ReportStage.done
