@@ -52,11 +52,25 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
+export interface Job {
+  id: number;
+  stage: ReportStage;
+  status: "pending" | "running" | "done" | "failed";
+  attempts: number;
+  cost_usd: number;
+  last_error: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
 export const api = {
   listReports: () => req<Report[]>("/reports"),
   getReport: (id: number) => req<Report>(`/reports/${id}`),
+  listJobs: (id: number) => req<Job[]>(`/reports/${id}/jobs`),
   createReport: (theme: string, subtitle?: string, mode: ReportMode = "standard") =>
     req<Report>("/reports", { method: "POST", body: JSON.stringify({ theme, subtitle, mode }) }),
+  resume: (id: number) =>
+    req<Report>(`/reports/${id}/resume`, { method: "POST" }),
   pdfUrl: (id: number) => `${API_BASE}/reports/${id}/pdf`,
   apiBase: () => API_BASE,
 };

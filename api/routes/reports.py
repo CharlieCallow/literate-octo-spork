@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -82,3 +83,59 @@ def get_pdf(report_id: int, session: Session = Depends(get_session)) -> FileResp
     if not path.exists():
         raise HTTPException(404, "PDF missing on disk")
     return FileResponse(path, media_type="application/pdf", filename=path.name)
+
+
+class JobOut(BaseModel):
+    id: int
+    stage: ReportStage
+    status: str
+    attempts: int
+    cost_usd: float
+    last_error: str | None
+    started_at: datetime | None
+    finished_at: datetime | None
+
+
+@router.get("/{report_id}/jobs", response_model=list[JobOut], dependencies=[Depends(require_auth)])
+def list_jobs(report_id: int, session: Session = Depends(get_session)) -> list[JobOut]:
+    rows = session.exec(
+        select(Job).where(Job.report_id == report_id).order_by(Job.created_at)
+    ).all()
+    return [
+        JobOut(
+            id=j.id or 0,
+            stage=j.stage,
+            status=j.status,
+            attempts=j.attempts,
+            cost_usd=j.cost_usd,
+            last_error=j.last_error,
+            started_at=j.started_at,
+            finished_at=j.finished_at,
+        )
+        for j in rows
+    ]
+
+
+@router.post("/{report_id}/resume", response_model=ReportOut, dependencies=[Depends(require_auth)])
+def resume(report_id: int, session: Session = Depends(get_session)) -> ReportOut:
+    """Re-queue a failed report from its last attempted stage. Workflow stages
+    are idempotent so this safely overwrites prior outputs without corruption."""
+    report = session.get(Report, report_id)
+    if not report:
+        raise HTTPException(404, "Report not found")
+    if report.stage != ReportStage.failed:
+        raise HTTPException(400, f"Report is not failed (stage={report.stage})")
+
+    # Last attempted stage is whatever the most recent job ran.
+    last_job = session.exec(
+        select(Job).where(Job.report_id == report_id).order_by(Job.created_at.desc())  # type: ignore[attr-defined]
+    ).first()
+    resume_stage = last_job.stage if last_job else ReportStage.brief
+
+    report.stage = resume_stage
+    report.error = None
+    session.add(report)
+    session.add(Job(report_id=report_id, stage=resume_stage))
+    session.commit()
+    session.refresh(report)
+    return ReportOut.from_db(report)
