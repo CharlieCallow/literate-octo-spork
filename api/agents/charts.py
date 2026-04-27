@@ -56,7 +56,7 @@ Workflow -- IN THIS ORDER:
    - subtitle: one short sentence, the angle
    - filename: short and unique like 'rates.png', 'spy.png'
 4. AFTER all make_chart calls succeed, write the markdown section. This is mandatory -- the agent ALWAYS finishes with the section, never with just a status line.
-   - Start with `## Data & charts`.
+   - The VERY FIRST CHARACTERS of your final response must be `## Data & charts` -- no preamble, no "Both charts rendered, now the section", no acknowledgements. Anything before that heading lands directly in the PDF as visible text.
    - For EACH chart you generated, write a short paragraph (60-120 words) of commentary.
      Place `[chart: <exact-filename-you-passed-to-make_chart>]` on its own line at the START of each paragraph.
    - Use the EXACT filenames you passed to make_chart -- typos = missing charts.
@@ -67,6 +67,7 @@ Failure modes to avoid:
 - Writing the section before calling make_chart -- leads to chart refs that don't exist.
 - Saying "Three charts rendered. Now the data section." and stopping -- always write the actual section.
 - Inventing filenames in the section that don't match the make_chart calls.
+- Prefixing the section with conversational text -- starts with `## Data & charts` on line 1, period.
 
 Do not invent data. Every claim cites a number from a series you actually fetched.
 """

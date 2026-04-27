@@ -467,9 +467,16 @@ def _heading(md: str) -> str | None:
 
 
 def _strip_heading(md: str) -> str:
+    """Drop any conversational preamble plus the first `## ...` heading.
+
+    Agents sometimes lead with status lines like 'Both charts rendered. Now
+    the section:' before the actual heading. Returning everything after the
+    first `## ` line strips both the preamble and the heading so the renderer
+    isn't left with two duplicate headings (one from us, one from the agent)."""
     lines = md.splitlines()
-    if lines and lines[0].startswith("## "):
-        return "\n".join(lines[1:]).lstrip("\n")
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith("## "):
+            return "\n".join(lines[i + 1:]).lstrip("\n")
     return md
 
 
