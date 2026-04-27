@@ -1,12 +1,12 @@
-# Forte Research — one-click launcher for Windows.
+# Forte Research -- one-click launcher for Windows.
 # Opens three PowerShell windows: API, worker, web dashboard.
-# Run this from the repo root: `.\start.ps1`
+# Run this from the repo root:  .\start.ps1
 
 $ErrorActionPreference = "Stop"
 $repo = $PSScriptRoot
 
 if (-not (Test-Path "$repo\.env")) {
-    Write-Host "[setup] No .env found. Copying from .env.example — fill it in before continuing." -ForegroundColor Yellow
+    Write-Host "[setup] No .env found. Copying from .env.example -- fill it in before continuing." -ForegroundColor Yellow
     Copy-Item "$repo\.env.example" "$repo\.env"
 }
 

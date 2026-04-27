@@ -1,4 +1,4 @@
-# Forte Research — one-time install script for Windows.
+# Forte Research -- one-time install script for Windows.
 # Installs Python deps + Playwright browser + npm deps.
 # Run once after cloning: `.\install.ps1`
 
