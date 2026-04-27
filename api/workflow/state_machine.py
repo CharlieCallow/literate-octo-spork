@@ -385,7 +385,7 @@ _CHART_TAG_RE = re.compile(r"\[chart:\s*(.+?)\s*\]")
 def _inline_charts(body: str, wd: Path) -> str:
     def repl(m: re.Match[str]) -> str:
         fname = m.group(1)
-        path = wd / "charts" / fname
+        path = (wd / "charts" / fname).resolve()
         if not path.exists():
             return f"_(chart missing: {fname})_"
         return f'<figure><img src="{path.as_uri()}" alt="{fname}"></figure>'
