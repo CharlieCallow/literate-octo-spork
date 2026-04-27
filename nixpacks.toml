@@ -1,0 +1,10 @@
+# Forte Research -- Nixpacks build config for Railway.
+#
+# Playwright needs Chromium downloaded into the build image. The default Python
+# Nixpacks build doesn't run `playwright install`, so we add it to the build
+# phase. --with-deps also pulls the apt packages Chromium needs at runtime.
+
+[phases.build]
+cmds = [
+  "python -m playwright install --with-deps chromium"
+]

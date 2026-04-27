@@ -24,6 +24,12 @@ Read [PROJECT.md](./PROJECT.md) at the start of every session before writing or 
 - `assets/` — Forte logo + Hillgate template + fonts
 - `api/render/styles/forte-palette.json` — single source of truth for brand colours
 
+## Polish backlog (when time)
+
+- Running-report card: show elapsed time + estimated time-to-finish + estimated cost
+- Use the cost estimate to surface a confirm dialog before a report kicks off
+- Bump Next.js past 15.0.x for the security CVE flagged at deploy time
+
 ## Session log
 
 - **2026-04-26** — M1 kickoff. Hillgate template + Forte logo dropped into `assets/`. Palette extracted from logo (`#302070` deep purple-navy from `FORTE` wordmark, `#5A8DA6` muted teal from `SECURITIES`). Hillgate uses `#0D1F6C` navy primary and three callout styles (green/navy/amber); structure mirrored, palette retuned to Forte.
