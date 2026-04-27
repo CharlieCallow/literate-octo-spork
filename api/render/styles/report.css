@@ -1,6 +1,8 @@
-/* Forte Research — report stylesheet (WeasyPrint).
+/* Forte Research — report stylesheet (Chromium / Playwright).
    Hillgate structure preserved, Forte palette retuned.
-   Variables drawn from api/render/styles/forte-palette.json. */
+   Variables drawn from api/render/styles/forte-palette.json.
+   Page header/footer are supplied by Playwright's pdf() templates,
+   not by CSS @page rules (Chromium does not support named running elements). */
 
 :root {
   --forte-navy: #1F1B4D;
@@ -19,29 +21,12 @@
   --amber-border: #B8860B; --amber-fill: #FFF8E1;
 }
 
-@page {
-  size: A4;
-  margin: 0.75in;
-
-  @top-left  { content: "Forte Research"; font: 600 9pt "Inter", sans-serif; color: var(--forte-navy); }
-  @top-center{ content: string(doctitle); font: 400 9pt "Inter", sans-serif; color: var(--forte-muted); }
-  @top-right { content: element(headerlogo); }
-
-  @bottom-left   { content: "Confidential"; font: 9pt "Inter", sans-serif; color: var(--forte-muted); }
-  @bottom-center { content: counter(page) " / " counter(pages); font: 9pt "Inter", sans-serif; color: var(--forte-muted); }
-  @bottom-right  { content: string(docdate); font: 9pt "Inter", sans-serif; color: var(--forte-muted); }
-}
-
-@page :first {
-  margin: 0;
-  @top-left { content: none; } @top-center { content: none; } @top-right { content: none; }
-  @bottom-left { content: none; } @bottom-center { content: none; } @bottom-right { content: none; }
-}
+@page { size: A4; }
 
 * { box-sizing: border-box; }
 
 html, body {
-  font-family: "Inter", "Source Sans Pro", "Helvetica Neue", Arial, sans-serif;
+  font-family: "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   font-size: 11pt;
   line-height: 1.5;
   color: var(--forte-ink);
@@ -50,15 +35,16 @@ html, body {
   margin: 0; padding: 0;
 }
 
+body { padding: 0 18mm; }
+
 /* ---- cover ---- */
 .cover {
-  page: cover;
   page-break-after: always;
   background: var(--forte-paper);
   display: flex;
   flex-direction: column;
-  height: 297mm;
-  padding: 25mm 22mm;
+  min-height: 100vh;
+  padding: 8mm 0;
 }
 .cover .logo { width: 64mm; max-width: 100%; }
 .cover h1 {
@@ -90,14 +76,6 @@ html, body {
 .cover .meta .contributors { color: var(--forte-ink); margin-bottom: 4mm; }
 .cover .meta .contributors strong { color: var(--forte-navy); }
 
-/* ---- header logo running element ---- */
-.running-logo { position: running(headerlogo); }
-.running-logo img { height: 12pt; }
-
-/* ---- title strings ---- */
-.doctitle { string-set: doctitle content(); }
-.docdate  { string-set: docdate content(); }
-
 /* ---- headings ---- */
 h1, h2, h3 { color: var(--forte-navy); page-break-after: avoid; }
 h1 { font-size: 22pt; font-weight: 700; margin: 0 0 6pt; }
@@ -109,14 +87,11 @@ p.lead { font-size: 12pt; color: var(--forte-ink); }
 strong { color: var(--forte-navy); }
 em { font-style: italic; }
 
-/* ---- inline emphasis label ---- */
 .label { color: var(--forte-navy); font-weight: 700; }
 
-/* ---- lists ---- */
 ul, ol { margin: 0 0 10pt 18pt; padding: 0; }
 li { margin: 0 0 4pt; }
 
-/* ---- author byline ---- */
 .byline {
   font-size: 9pt; color: var(--forte-muted);
   letter-spacing: 0.04em; text-transform: uppercase;
@@ -124,7 +99,6 @@ li { margin: 0 0 4pt; }
 }
 .byline .name { color: var(--forte-purple); font-weight: 600; }
 
-/* ---- pull quote ---- */
 .pullquote {
   font-size: 16pt;
   line-height: 1.3;
@@ -135,17 +109,14 @@ li { margin: 0 0 4pt; }
   margin: 14pt 0;
 }
 
-/* ---- captions ---- */
 .caption, figcaption {
   font-size: 9pt; color: var(--forte-muted); font-style: italic;
   margin-top: 4pt;
 }
 
-/* ---- charts ---- */
 figure { margin: 12pt 0; page-break-inside: avoid; }
 figure img { width: 100%; height: auto; }
 
-/* ---- tables ---- */
 table { width: 100%; border-collapse: collapse; margin: 10pt 0; font-size: 10pt; page-break-inside: avoid; }
 table th { background: var(--forte-navy); color: #FFF; font-weight: 600; text-align: left; padding: 6pt 8pt; }
 table td { padding: 5pt 8pt; border-bottom: 1px solid var(--forte-rule); }
@@ -155,7 +126,6 @@ table.kv td:first-child { width: 28%; color: var(--forte-navy); font-weight: 600
 table.kv th { display: none; }
 table.kv tr:nth-child(even) td { background: transparent; }
 
-/* ---- callouts ---- */
 .callout {
   margin: 12pt 0;
   padding: 10pt 14pt;
@@ -176,6 +146,5 @@ table.kv tr:nth-child(even) td { background: transparent; }
 }
 .callout--house .label, .callout--house strong { color: var(--forte-teal); }
 
-/* ---- disclosures ---- */
 .disclosures { font-size: 9pt; color: var(--forte-muted); }
 .disclosures h2 { color: var(--forte-muted); border-top-color: var(--forte-rule); }

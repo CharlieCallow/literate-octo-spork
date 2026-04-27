@@ -1,4 +1,9 @@
-"""Markdown -> HTML -> PDF pipeline using Jinja2 + WeasyPrint."""
+"""Markdown -> HTML -> PDF pipeline using Jinja2 + Playwright (Chromium).
+
+Playwright was picked over WeasyPrint because the WeasyPrint system deps
+(GTK3 / Pango / Cairo) are painful on Windows. Chromium installs cleanly via
+`playwright install chromium`.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +13,7 @@ from typing import Sequence
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markdown_it import MarkdownIt
-from weasyprint import HTML
+from playwright.sync_api import sync_playwright
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STYLES_DIR = Path(__file__).parent / "styles"
@@ -31,6 +36,26 @@ class Section:
 
 def _md() -> MarkdownIt:
     return MarkdownIt("commonmark", {"html": True}).enable("table")
+
+
+_HEADER_TEMPLATE = """
+<div style="font-size: 9pt; font-family: 'Inter','Segoe UI',sans-serif;
+            color: #6B6B7A; width: 100%; padding: 0 18mm;
+            display: flex; justify-content: space-between; align-items: center;">
+  <span style="color: #1F1B4D; font-weight: 600;">Forte Research</span>
+  <span class="title" style="color: #6B6B7A;"></span>
+</div>
+"""
+
+_FOOTER_TEMPLATE = """
+<div style="font-size: 9pt; font-family: 'Inter','Segoe UI',sans-serif;
+            color: #6B6B7A; width: 100%; padding: 0 18mm;
+            display: flex; justify-content: space-between;">
+  <span>Confidential</span>
+  <span><span class="pageNumber"></span> / <span class="totalPages"></span></span>
+  <span class="date"></span>
+</div>
+"""
 
 
 def render_pdf(
@@ -78,5 +103,22 @@ def render_pdf(
     )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    HTML(string=html, base_url=str(out_path.parent)).write_pdf(str(out_path))
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        ctx = browser.new_context()
+        page = ctx.new_page()
+        page.set_content(html, wait_until="networkidle")
+        page.emulate_media(media="print")
+        page.pdf(
+            path=str(out_path),
+            format="A4",
+            print_background=True,
+            display_header_footer=True,
+            header_template=_HEADER_TEMPLATE,
+            footer_template=_FOOTER_TEMPLATE,
+            margin={"top": "20mm", "bottom": "16mm", "left": "0", "right": "0"},
+        )
+        browser.close()
+
     return out_path
