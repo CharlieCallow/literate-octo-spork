@@ -171,6 +171,8 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         brief = _read(wd / "brief.md")
         contributors = _resolved_contributors(brief)
         sections: list[dict[str, str]] = []
+        # Only analyst sections go through the EIC. The Data & Charts section
+        # passes through verbatim so chart references survive.
         for c in contributors:
             body_md = _read(wd / f"section-{c['slug']}.md")
             if not body_md.strip():
@@ -181,13 +183,6 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
                 "author": c["name"],
                 "role": c["role"],
             })
-        # Data & charts section comes last among analyst sections.
-        sections.append({
-            "heading": "Data & charts",
-            "body": _strip_heading(_read(wd / "data-section.md")),
-            "author": DC_DISPLAY["name"],
-            "role": DC_DISPLAY["role"],
-        })
         chart_summary = _list_charts(wd / "charts")
         result = eic.edit(brief=brief, sections=sections, chart_summary=chart_summary)
         _write(wd / "edited.md", result.text)
@@ -350,6 +345,18 @@ def _sections_for_render(parsed: dict[str, object], wd: Path) -> list[Section]:
             body_md=body,
             author=str(s["author"]),
             role=str(s["role"]),
+        ))
+
+    # Data & charts section is appended verbatim (skips EIC edit so chart
+    # references survive). Sits between the analyst sections and the closing.
+    data_md = _read(wd / "data-section.md").strip()
+    if data_md:
+        body = _inline_charts(_strip_heading(data_md), wd)
+        out.append(Section(
+            heading="Data & charts",
+            body_md=body,
+            author=DC_DISPLAY["name"],
+            role=DC_DISPLAY["role"],
         ))
 
     if closing := parsed.get("closing"):
