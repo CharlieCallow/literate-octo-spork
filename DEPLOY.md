@@ -30,8 +30,13 @@ Both Railway and Vercel pick up changes from GitHub automatically on each push.
 
 1. Click the service Railway just created from your repo (default name is the
    repo name).
-2. Go to **Settings** -> **Deploy**:
-   - **Start Command**: `uvicorn api.main:app --host 0.0.0.0 --port $PORT`
+2. The repo's `Procfile` declares the start command:
+   `web: uvicorn api.main:app --host 0.0.0.0 --port $PORT`
+   Railway's Nixpacks builder picks this up automatically.
+   - **If Railway ignores it** (you'll see `No module named forte-research`
+     in the logs), set it manually: **Settings** -> **Deploy** ->
+     **Custom Start Command**:
+     `uvicorn api.main:app --host 0.0.0.0 --port $PORT`
 3. Go to **Settings** -> **Networking** -> **Generate Domain**. You'll get
    something like `https://forte-research.up.railway.app`. Note this URL.
 
@@ -125,6 +130,7 @@ in `DASHBOARD_PASSWORD_HASH`. Commission a fast-mode report and watch it land.
 
 | Symptom | Look at |
 |---|---|
+| `No module named forte-research` on boot | Procfile not picked up. Set the Custom Start Command in Settings -> Deploy: `uvicorn api.main:app --host 0.0.0.0 --port $PORT` |
 | 500 on every request | Railway API logs -- usually missing env var |
 | 401 with valid password | `DASHBOARD_PASSWORD_HASH` wasn't pasted fully (cut at `$`?) |
 | Dashboard shows "Failed to fetch" | `NEXT_PUBLIC_API_BASE` is wrong, or `CORS_ORIGINS` doesn't include the Vercel URL |

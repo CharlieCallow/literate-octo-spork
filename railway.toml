@@ -1,18 +1,13 @@
-# Railway deploy config.
-# Two services share this repo: an API + an embedded worker, plus Postgres
-# (managed by Railway). Single-service alternative: set BUNDLE_WORKER=true on
-# the api service and skip the worker service entirely.
+# Railway deploy config. The Procfile sets the start command; this file is just
+# documentation of the recommended deploy shape.
+#
+# Recommended (single service): create one Railway service from this repo and
+# set BUNDLE_WORKER=true. The Procfile's `web` entry runs uvicorn; the bundled
+# worker is spawned by the API process at startup.
+#
+# Two services (advanced): create a second service from the same repo and set
+# its start command to `python -u -m api.workflow.worker`. Both services need
+# the same DATABASE_URL; the worker doesn't need CORS_ORIGINS.
 
 [build]
 builder = "NIXPACKS"
-
-# The api service exposes :8000 publicly.
-[[services]]
-name = "api"
-startCommand = "uvicorn api.main:app --host 0.0.0.0 --port $PORT"
-
-# The worker service runs the polling loop in the background.
-# Skip this service if you set BUNDLE_WORKER=true on the api service instead.
-[[services]]
-name = "worker"
-startCommand = "python -m api.workflow.worker"
