@@ -56,8 +56,10 @@ class Job(SQLModel, table=True):
     stage: ReportStage
     status: str = Field(default="pending", index=True)  # pending | running | done | failed
     attempts: int = 0
+    cost_usd: float = 0.0
     last_error: str | None = None
     created_at: datetime = Field(default_factory=_now)
+    run_after: datetime | None = Field(default=None, index=True)  # don't pick up before this time
     started_at: datetime | None = None
     finished_at: datetime | None = None
 

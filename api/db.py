@@ -31,15 +31,20 @@ def _migrate_sqlite() -> None:
     """Add columns introduced after the first ship. SQLite-only; no-op elsewhere."""
     if not settings.database_url.startswith("sqlite"):
         return
+    additions: list[tuple[str, str]] = [
+        # M2 cost-mode work
+        ("reports", "ALTER TABLE reports ADD COLUMN mode VARCHAR DEFAULT 'standard'"),
+        # M2 sprint 3: per-stage cost + retry scheduling
+        ("jobs",    "ALTER TABLE jobs ADD COLUMN cost_usd REAL DEFAULT 0.0"),
+        ("jobs",    "ALTER TABLE jobs ADD COLUMN run_after TIMESTAMP"),
+    ]
     with engine.connect() as conn:
-        # Add reports.mode if it predates the M2 cost-mode work.
-        try:
-            conn.exec_driver_sql(
-                "ALTER TABLE reports ADD COLUMN mode VARCHAR DEFAULT 'standard'"
-            )
-            conn.commit()
-        except Exception:
-            pass  # column already exists
+        for _table, sql in additions:
+            try:
+                conn.exec_driver_sql(sql)
+                conn.commit()
+            except Exception:
+                pass  # column already exists
 
 
 def get_session() -> Iterator[Session]:
