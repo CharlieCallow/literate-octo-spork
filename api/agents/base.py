@@ -4,6 +4,7 @@ via an audit hook."""
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections.abc import Callable
@@ -34,10 +35,52 @@ class Tool:
 
 
 @dataclass
+class Citation:
+    url: str
+    title: str | None = None
+    source: str = "web"  # web | wikipedia_summary | edgar_filings | etc.
+
+
+@dataclass
 class AgentResult:
     text: str
     cost_usd: float
+    citations: list[Citation] = field(default_factory=list)
     transcript: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _extract_server_citations(content_blocks: Any, into: list[Citation]) -> None:
+    """Pull URLs out of web_search_tool_result blocks in a model response."""
+    for block in content_blocks:
+        if getattr(block, "type", None) != "web_search_tool_result":
+            continue
+        for r in getattr(block, "content", []) or []:
+            url = getattr(r, "url", None)
+            if url:
+                into.append(Citation(
+                    url=url,
+                    title=getattr(r, "title", None),
+                    source="web",
+                ))
+
+
+def _extract_local_citations(tool_name: str, out: Any, into: list[Citation]) -> None:
+    """Parse a local tool's JSON output for url / filings[*].url fields."""
+    try:
+        data = json.loads(out) if isinstance(out, str) else out
+    except (json.JSONDecodeError, TypeError):
+        return
+    if not isinstance(data, dict):
+        return
+    if url := data.get("url"):
+        into.append(Citation(url=url, title=data.get("title"), source=tool_name))
+    for f in data.get("filings", []) or []:
+        if isinstance(f, dict) and (u := f.get("url")):
+            into.append(Citation(
+                url=u,
+                title=f.get("form"),
+                source=tool_name,
+            ))
 
 
 class Agent:
@@ -99,6 +142,7 @@ class Agent:
 
         messages: list[dict[str, Any]] = [{"role": "user", "content": user_prompt}]
         transcript: list[dict[str, Any]] = []
+        citations: list[Citation] = []
         total_cost = 0.0
 
         for _ in range(max_iters):
@@ -129,10 +173,16 @@ class Agent:
 
             messages.append({"role": "assistant", "content": resp.content})
             transcript.append({"role": "assistant", "content": [b.model_dump() for b in resp.content]})
+            _extract_server_citations(resp.content, citations)
 
             if resp.stop_reason != "tool_use":
                 text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
-                return AgentResult(text=text.strip(), cost_usd=total_cost, transcript=transcript)
+                return AgentResult(
+                    text=text.strip(),
+                    cost_usd=total_cost,
+                    citations=citations,
+                    transcript=transcript,
+                )
 
             tool_results: list[dict[str, Any]] = []
             for block in resp.content:
@@ -148,6 +198,7 @@ class Agent:
                 try:
                     out = tool.fn(**(block.input or {}))
                     self.audit("tool_call", {"agent": self.slug, "tool": block.name, "input": block.input})
+                    _extract_local_citations(block.name, out, citations)
                     tool_results.append({
                         "type": "tool_result", "tool_use_id": block.id,
                         "content": str(out),
@@ -165,6 +216,7 @@ class Agent:
         return AgentResult(
             text="[agent halted: max iterations reached]",
             cost_usd=total_cost,
+            citations=citations,
             transcript=transcript,
         )
 

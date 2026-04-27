@@ -4,6 +4,7 @@ a stage overwrites its output and does not corrupt earlier stages."""
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import date
 from pathlib import Path
@@ -11,6 +12,7 @@ from pathlib import Path
 from sqlmodel import Session, select
 
 from api.agents.analyst import Analyst
+from api.agents.base import AgentResult, Citation
 from api.agents.charts import DataAndCharts
 from api.agents.cost import CostTracker
 from api.agents.editor import EditorInChief
@@ -89,6 +91,40 @@ def _persist_cost(report_id: int, delta: float) -> None:
         session.commit()
 
 
+def _record(report_id: int, wd: Path, result: AgentResult) -> None:
+    """After each agent run: persist cost + dedupe-append citations to sources.json."""
+    _persist_cost(report_id, result.cost_usd)
+    if result.citations:
+        _append_citations(wd, result.citations)
+
+
+def _append_citations(wd: Path, citations: list[Citation]) -> None:
+    src = wd / "sources.json"
+    existing: list[dict[str, str | None]] = []
+    if src.exists():
+        try:
+            existing = json.loads(src.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            existing = []
+    seen = {c.get("url") for c in existing if isinstance(c, dict)}
+    for c in citations:
+        if c.url and c.url not in seen:
+            existing.append({"url": c.url, "title": c.title, "source": c.source})
+            seen.add(c.url)
+    src.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+
+
+def _read_sources(wd: Path) -> list[dict[str, str | None]]:
+    sp = wd / "sources.json"
+    if not sp.exists():
+        return []
+    try:
+        data = json.loads(sp.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    return data if isinstance(data, list) else []
+
+
 def _next_stage(stage: ReportStage) -> ReportStage:
     i = STAGE_ORDER.index(stage)
     return STAGE_ORDER[i + 1]
@@ -148,7 +184,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
                     if r and not r.subtitle:
                         r.subtitle = sub
                         session.add(r); session.commit()
-        _persist_cost(report.id, result.cost_usd)
+        _record(report.id, wd, result)
         return _next_stage(stage)
 
     if stage == ReportStage.research:
@@ -158,7 +194,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             analyst = _make_analyst(c["slug"], cost, audit, models["analyst"])
             result = analyst.research(brief, report.theme, wd, fast=is_fast)
             _write(wd / f"notes-{c['slug']}.md", result.text)
-            _persist_cost(report.id, result.cost_usd)
+            _record(report.id, wd, result)
         return _next_stage(stage)
 
     if stage == ReportStage.charts:
@@ -167,7 +203,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         all_notes = _concat_notes(wd, _resolved_contributors(brief))
         result = dc.build(brief, all_notes, wd / "charts", fast=is_fast)
         _write(wd / "data-section.md", result.text)
-        _persist_cost(report.id, result.cost_usd)
+        _record(report.id, wd, result)
         return _next_stage(stage)
 
     if stage == ReportStage.draft:
@@ -178,7 +214,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             notes = _read(wd / f"notes-{c['slug']}.md")
             result = analyst.draft(brief, notes, report.theme)
             _write(wd / f"section-{c['slug']}.md", result.text)
-            _persist_cost(report.id, result.cost_usd)
+            _record(report.id, wd, result)
         return _next_stage(stage)
 
     if stage == ReportStage.edit:
@@ -201,7 +237,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         chart_summary = _list_charts(wd / "charts")
         result = eic.edit(brief=brief, sections=sections, chart_summary=chart_summary)
         _write(wd / "edited.md", result.text)
-        _persist_cost(report.id, result.cost_usd)
+        _record(report.id, wd, result)
         return _next_stage(stage)
 
     if stage == ReportStage.render:
@@ -228,6 +264,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             house_view_top=parsed.get("house_view_top"),
             house_view_bottom=parsed.get("house_view_bottom"),
             read_minutes=8,
+            sources=_read_sources(wd),
         )
         with Session(engine) as session:
             r = session.get(Report, report.id)

@@ -70,6 +70,7 @@ def render_pdf(
     house_view_bottom: str | None = None,
     read_minutes: int = 8,
     logo_path: Path | None = None,
+    sources: Sequence[dict[str, str | None]] | None = None,
 ) -> Path:
     env = Environment(
         loader=FileSystemLoader(str(TEMPLATES_DIR)),
@@ -100,6 +101,7 @@ def render_pdf(
         read_minutes=read_minutes,
         logo_path=logo.as_uri(),
         css_path=(STYLES_DIR / "report.css").as_uri(),
+        sources=list(sources or []),
     )
 
     out_path = out_path.resolve()

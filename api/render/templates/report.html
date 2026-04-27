@@ -29,6 +29,20 @@
 </div>
 {% endif %}
 
+{% if sources %}
+<section class="sources">
+  <h2>Sources</h2>
+  <ol>
+    {% for s in sources %}
+    <li>
+      <a href="{{ s.url }}">{{ s.title or s.url }}</a>
+      <span class="muted-tag">— {{ s.source }}</span>
+    </li>
+    {% endfor %}
+  </ol>
+</section>
+{% endif %}
+
 {% include "disclosures.html" %}
 
 </body>
