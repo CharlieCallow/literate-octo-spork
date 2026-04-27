@@ -7,6 +7,7 @@ dependencies = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.32",
   "sqlmodel>=0.0.22",
+  "psycopg[binary]>=3.2",
   "pydantic-settings>=2.6",
   "anthropic>=0.40",
   "playwright>=1.48",

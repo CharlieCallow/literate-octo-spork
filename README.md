@@ -140,6 +140,12 @@ See [PROJECT.md §4](./PROJECT.md) and [CLAUDE.md](./CLAUDE.md). Briefly:
 - `assets/` — Forte logo + Hillgate template
 - `scripts/` — smoke test
 
+## Deploy (Railway + Vercel)
+
+See [DEPLOY.md](./DEPLOY.md) for the 30-minute walkthrough. tl;dr: Railway hosts
+the API + worker + Postgres; Vercel hosts the Next.js dashboard. Total recurring
+cost ~$5/month plus per-report Anthropic spend.
+
 ## Reset
 
 ```powershell

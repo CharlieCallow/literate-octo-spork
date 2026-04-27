@@ -16,6 +16,15 @@ class Settings(BaseSettings):
     app_name: str = "Forte Research"
     app_env: str = "dev"
 
+    # Comma-separated origin URLs allowed to call the API. Defaults cover local dev;
+    # add your Vercel deploy URL on Railway. Example: "https://forte.vercel.app"
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+
+    # If true, the API also spawns the worker as a subprocess on startup.
+    # Use on Railway when running a single service; leave false for local dev
+    # (where you run them as separate processes via start.ps1).
+    bundle_worker: bool = False
+
     anthropic_api_key: str = ""
 
     model_haiku: str = "claude-haiku-4-5-20251001"

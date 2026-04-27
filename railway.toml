@@ -1,0 +1,18 @@
+# Railway deploy config.
+# Two services share this repo: an API + an embedded worker, plus Postgres
+# (managed by Railway). Single-service alternative: set BUNDLE_WORKER=true on
+# the api service and skip the worker service entirely.
+
+[build]
+builder = "NIXPACKS"
+
+# The api service exposes :8000 publicly.
+[[services]]
+name = "api"
+startCommand = "uvicorn api.main:app --host 0.0.0.0 --port $PORT"
+
+# The worker service runs the polling loop in the background.
+# Skip this service if you set BUNDLE_WORKER=true on the api service instead.
+[[services]]
+name = "worker"
+startCommand = "python -m api.workflow.worker"
