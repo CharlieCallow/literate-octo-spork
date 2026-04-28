@@ -160,7 +160,14 @@ class Agent:
         # max_retries=5 lets the SDK ride out transient 429s with its own
         # backoff. We add an outer wrapper for 429s that need a longer wait
         # (per-minute token limits don't clear inside the SDK's window).
-        self._client = Anthropic(api_key=settings.anthropic_api_key, max_retries=5)
+        # An explicit per-call timeout caps a single hung request -- the SDK
+        # default is 10 minutes which is long enough to silently freeze a
+        # whole report when one analyst's call wedges.
+        self._client = Anthropic(
+            api_key=settings.anthropic_api_key,
+            max_retries=5,
+            timeout=120.0,
+        )
 
     @property
     def slug(self) -> str:
@@ -297,26 +304,36 @@ class Agent:
             tool_outputs=tool_outputs,
         )
 
+    # Total worst-case wait: 2 attempts * 30s ceiling = 60s before we let
+    # the rate limit propagate up. Beyond that point, retrying inside the
+    # call wedges the whole report -- better to let the runner's stage-level
+    # retry kick in (with its own 2/4/8s backoff).
+    _RATE_LIMIT_ATTEMPTS = 2
+    _RATE_LIMIT_WAIT_CEILING_S = 30
+
     def _call_with_429_backoff(self, kwargs: dict[str, Any]) -> Any:
         """Call messages.create() and ride out per-minute rate-limit windows.
 
         The Anthropic SDK retries on 429 internally, but its backoff window is
-        short. Per-minute-token limits often need a full bucket reset (~60s);
-        we honour the retry-after header (capped at 65s) for up to 4 attempts."""
-        attempts = 4
+        short. Per-minute-token limits often need a partial bucket reset; we
+        honour the retry-after header (capped) for a small number of attempts.
+        Beyond that we raise -- the stage runner's retry loop will pick it up
+        with backoff at the job level, which is a less ambiguous failure mode
+        than a single call that silently waits five minutes."""
+        attempts = self._RATE_LIMIT_ATTEMPTS
         for i in range(attempts):
             try:
                 return self._client.messages.create(**kwargs)
             except RateLimitError as e:
                 if i == attempts - 1:
                     raise
-                wait = 35
+                wait = min(20, self._RATE_LIMIT_WAIT_CEILING_S)
                 resp = getattr(e, "response", None)
                 if resp is not None:
                     ra = resp.headers.get("retry-after")
                     if ra:
                         with contextlib.suppress(ValueError):
-                            wait = min(int(ra), 65)
+                            wait = min(int(ra), self._RATE_LIMIT_WAIT_CEILING_S)
                 log.warning(
                     "agent=%s rate-limited; sleeping %ss (attempt %d/%d)",
                     self.slug, wait, i + 1, attempts,

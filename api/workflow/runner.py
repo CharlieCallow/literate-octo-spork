@@ -12,13 +12,24 @@ from datetime import UTC, datetime, timedelta
 from sqlmodel import Session, select
 
 from api.db import engine
-from api.models import Job, Report, ReportStage
+from api.models import Job, Report, ReportMode, ReportStage
 from api.workflow.state_machine import run_stage
 
 log = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 3
 BACKOFF_BASE_S = 2  # 2s, 4s, 8s
+
+# Per-mode wall-clock deadline a single stage is allowed to hold the
+# `running` lease. After this the watchdog assumes the worker died and
+# reclaims the job through the normal failure path. Generous so that a
+# slow-but-alive deep run doesn't get culled mid-call.
+STUCK_JOB_DEADLINE_S: dict[ReportMode, int] = {
+    ReportMode.fast:     5 * 60,    # 5 min
+    ReportMode.standard: 15 * 60,   # 15 min
+    ReportMode.deep:     30 * 60,   # 30 min
+}
+_DEFAULT_STUCK_DEADLINE_S = 15 * 60
 
 
 def claim_one_job() -> Job | None:
@@ -40,6 +51,47 @@ def claim_one_job() -> Job | None:
         session.commit()
         session.refresh(job)
         return job
+
+
+def reclaim_stuck_jobs() -> int:
+    """Find `running` jobs whose lease has expired and route them through
+    the same failure path as a real exception. The most likely cause is a
+    worker that died mid-stage (OOM, redeploy, network); without this, the
+    job sits in `running` forever and the report can't be resumed.
+
+    Returns the number of jobs reclaimed. Intended to be called from the
+    worker poll loop."""
+    now = datetime.now(UTC)
+    stuck: list[tuple[Job, int]] = []
+    with Session(engine) as session:
+        for j in session.exec(select(Job).where(Job.status == "running")).all():
+            started = j.started_at
+            if started is None:
+                continue
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=UTC)
+            report = session.get(Report, j.report_id)
+            mode = report.mode if report else ReportMode.standard
+            deadline = STUCK_JOB_DEADLINE_S.get(mode, _DEFAULT_STUCK_DEADLINE_S)
+            elapsed = (now - started).total_seconds()
+            if elapsed < deadline:
+                continue
+            log.warning(
+                "reclaiming stuck job %s (report=%s stage=%s, running for %ds)",
+                j.id, j.report_id, j.stage, int(elapsed),
+            )
+            stuck.append((j, deadline))
+
+    # Route each reclaim through _handle_failure outside the read loop so
+    # the failure-path session doesn't fight the read session.
+    for j, deadline in stuck:
+        _handle_failure(
+            j,
+            TimeoutError(
+                f"job exceeded {deadline}s deadline -- worker likely died"
+            ),
+        )
+    return len(stuck)
 
 
 def execute(job: Job) -> None:

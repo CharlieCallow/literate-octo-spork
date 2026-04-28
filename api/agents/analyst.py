@@ -12,6 +12,7 @@ from api.agents.tools import (
     coingecko_markets_tool,
     coingecko_trending_tool,
     defillama_tool,
+    edgar_extract_tool,
     edgar_filings_tool,
     eia_series_tool,
     fred_series_tool,
@@ -88,6 +89,7 @@ Crypto / DeFi:
 
 Filings / regulatory:
 - `edgar_filings` — recent SEC filings for a ticker (10-K, 10-Q, 8-K)
+- `edgar_extract` — pull a named section ('risk_factors', 'mdna', 'business', 'guidance', 'outlook', 'legal_proceedings', 'controls') or keyword-matched paragraphs from a filing URL. Use this to QUOTE primary-source language in your notes — that's what makes a report read like a real shop instead of a meta-summariser.
 - `openfda_drug_labels` — FDA drug labels search
 - `openfda_recalls` — recent drug recalls
 - `clinical_trials` — ClinicalTrials.gov pipeline data (sponsor, phase, status)
@@ -117,6 +119,7 @@ Be opinionated; hedging without conviction is the failure mode. Output ~300-500 
             yfinance_history_tool(),
             wikipedia_tool(),
             edgar_filings_tool(),
+            edgar_extract_tool(),
             coingecko_markets_tool(),
             coingecko_trending_tool(),
             eia_series_tool(),
@@ -146,6 +149,46 @@ Be opinionated; hedging without conviction is the failure mode. Output ~300-500 
             max_tokens=max_tokens,
             max_iters=max_iters,
         )
+
+    def rebut(
+        self, *, brief: str, my_section: str,
+        peer_sections: list[dict[str, str]], theme: str,
+    ) -> AgentResult:
+        """One-paragraph reaction to peer drafts. Run between draft and
+        redteam so the EIC sees real cross-analyst disagreement on the
+        record instead of having to triangulate it from section bodies."""
+        if not peer_sections:
+            return AgentResult(text="", cost_usd=0.0)
+        peers_blob = "\n\n---\n\n".join(
+            f"## {p['author']} — {p.get('role', 'Analyst')}\n\n{p['body']}"
+            for p in peer_sections
+        )
+        prompt = f"""Your colleagues just finished their drafts on this report. Read what they wrote and tell us where you'd push back. The Editor will use this as primary material for the report's DISAGREEMENT block -- so be specific and on the record.
+
+THEME: {theme}
+
+THE BRIEF:
+
+{brief}
+
+YOUR OWN SECTION (for reference -- this is what you wrote):
+
+{my_section}
+
+YOUR COLLEAGUES' SECTIONS:
+
+{peers_blob}
+
+Write ONE paragraph (60-120 words). Stay in your voice -- this is your name on it.
+
+- Name the colleague and the specific claim you'd push back on (quote a phrase if it helps).
+- Say *why* you disagree -- evidence, framing, conviction calibration, or risk you think they've underweighted.
+- Be specific about the directional difference: are you more bearish, longer horizon, different beneficiary?
+- If you genuinely don't disagree with anything substantive, write the literal phrase "(no substantive disagreement)" and stop -- don't manufacture one.
+
+Output the paragraph and nothing else. No headings, no preamble.
+"""
+        return self.run(prompt, max_tokens=512, max_iters=1)
 
     def draft(self, brief: str, notes: str, theme: str) -> AgentResult:
         prompt = f"""Draft your section of the report based on the notes below. Stay in your voice (the persona file is your identity). The Editor will preserve voice when editing -- write in the voice you actually want to read.

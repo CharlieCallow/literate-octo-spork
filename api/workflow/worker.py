@@ -17,7 +17,7 @@ from types import FrameType
 from api.db import init_db
 from api.scout_runner import parse_hhmm, run_scout, should_run_today
 from api.settings import settings
-from api.workflow.runner import claim_one_job, execute
+from api.workflow.runner import claim_one_job, execute, reclaim_stuck_jobs
 
 POLL_INTERVAL_S = 3.0
 
@@ -91,6 +91,18 @@ def main() -> None:
         signal.signal(signal.SIGTERM, _request_shutdown)  # not on Windows main thread
 
     while not _should_stop:
+        # Watchdog runs every poll: jobs left in `running` past their
+        # mode-specific deadline are routed through the failure path so
+        # the same backoff-and-retry logic that handles real exceptions
+        # picks them up. Cheap (one indexed query). Catches the case
+        # where the previous worker died mid-job.
+        try:
+            n = reclaim_stuck_jobs()
+            if n:
+                log.warning("watchdog reclaimed %d stuck job(s)", n)
+        except Exception:  # noqa: BLE001
+            log.exception("watchdog reclaim_stuck_jobs failed (non-blocking)")
+
         job = claim_one_job()
         if job is None:
             _maybe_run_scheduled_scout(log)

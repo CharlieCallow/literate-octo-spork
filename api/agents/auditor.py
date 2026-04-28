@@ -23,6 +23,50 @@ class Auditor(Agent):
             **kwargs,  # type: ignore[arg-type]
         )
 
+    def pre_draft_audit(
+        self, *, agent_slug: str, notes_md: str, tool_outputs_jsonl: str,
+    ) -> AgentResult:
+        """Per-analyst self-audit on research notes before they go to draft.
+
+        Same logic as review() but scoped to one analyst's notes and the slice
+        of the tool-output ledger that analyst produced. Catches ungrounded
+        claims while the analyst still has time to either qualify them or have
+        them killed in the draft stage. The rewritten notes overwrite the
+        original notes-{slug}.md file."""
+        # Filter the ledger to lines this analyst actually emitted. Keeps the
+        # prompt small and prevents an analyst's claim getting "grounded" by
+        # a tool output a different analyst saw.
+        scoped: list[str] = []
+        for line in tool_outputs_jsonl.splitlines():
+            if not line.strip():
+                continue
+            if f'"agent": "{agent_slug}"' in line or f'"agent":"{agent_slug}"' in line:
+                scoped.append(line)
+        scoped_blob = "\n".join(scoped) if scoped else "(no tool calls recorded for this analyst)"
+
+        prompt = f"""You are auditing an analyst's research notes BEFORE they draft from them. The same grounding logic the post-edit auditor applies, but moved upstream so weak claims die in research instead of leaking into prose.
+
+You are NOT editing voice or argument. Only numbers and quantitative claims. If a number isn't grounded in the analyst's own tool calls below, qualify it ("around", "roughly") or strike the figure -- never invent a different one.
+
+# THIS ANALYST'S TOOL CALLS (JSONL -- one call per line)
+
+{scoped_blob}
+
+# THEIR NOTES
+
+{notes_md}
+
+Rules:
+- A number is "grounded" if the same value (or a value within 1% relative tolerance for prices/rates, exact for percentages quoted to 1dp) appears in any line of their JSONL above.
+- Grounded numbers: leave the sentence unchanged.
+- Ungrounded but plausible derivative (a percentage change of two grounded values, e.g.): qualify with "around" / "roughly" / "approximately" / "near" -- keep the figure.
+- Ungrounded and implausible (no related data in this analyst's ledger): rewrite the sentence to drop the figure. Do not insert a different number. Keep the surrounding voice and structure.
+- Dates, ticker symbols, FRED series ids, sponsor names, study NCT ids and other non-quantitative identifiers are not subject to audit.
+- Markdown links (`[anchor](url)`) and conviction tags (`{{c1}}`..`{{c5}}`) MUST be preserved verbatim -- the downstream parsers need them.
+
+Output the FULL notes verbatim with the modifications above applied. No headings before or after, no audit notes section -- the result feeds directly into the draft stage as if it were the analyst's own."""
+        return self.run(prompt, max_tokens=4096, max_iters=1)
+
     def review(self, *, edited: str, tool_outputs_jsonl: str) -> AgentResult:
         # Renamed from `audit` because Agent base class has a `self.audit`
         # callable hook attribute -- a method called `audit` on the instance

@@ -932,7 +932,7 @@ def list_closed_positions() -> list[PositionRow]:
     return [_to_position_row(r) for r in rows]
 
 
-def _to_position_row(c) -> "PositionRow":  # type: ignore[no-untyped-def]
+def _to_position_row(c) -> PositionRow:  # type: ignore[no-untyped-def]
     return PositionRow(
         id=c.id or 0,
         report_id=c.report_id,

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+import httpx as httpx_exc
 import pandas as pd
 
 from api.agents.base import Tool
@@ -147,6 +148,51 @@ def edgar_filings_tool() -> Tool:
                 "limit": {"type": "integer", "default": 5},
             },
             "required": ["ticker"],
+        },
+        fn=fn,
+    )
+
+
+def edgar_extract_tool() -> Tool:
+    def fn(url: str, section: str | None = None, query: str | None = None) -> str:
+        try:
+            payload = edgar.extract_filing_text(url, section=section, query=query)
+        except (ValueError, httpx_exc.HTTPError) as e:
+            return json.dumps({"url": url, "error": str(e)})
+        # Carry the source url so the citation extractor picks it up.
+        payload.setdefault("title", f"SEC filing extract: {section or query or 'head'}")
+        return json.dumps(payload)
+
+    return Tool(
+        name="edgar_extract",
+        description=(
+            "Fetch the text of a specific SEC filing and pull a named section "
+            "or a keyword-matched slice. Pass the full filing URL from "
+            "`edgar_filings`. `section` options: 'risk_factors', 'mdna' "
+            "(management discussion), 'business', 'legal_proceedings', "
+            "'outlook', 'guidance', 'controls'. Or pass `query` for a "
+            "free-text paragraph match (case-insensitive). Returns the "
+            "matched text -- quote it directly in your notes for primary-"
+            "source citations."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "Full SEC document URL (sec.gov/Archives/edgar/...).",
+                },
+                "section": {
+                    "type": "string",
+                    "enum": list(edgar._SECTION_ANCHORS.keys()),
+                    "description": "Named section to slice from the filing.",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Free-text keyword query; returns paragraphs matching every term.",
+                },
+            },
+            "required": ["url"],
         },
         fn=fn,
     )

@@ -35,6 +35,7 @@ STAGE_ORDER: list[ReportStage] = [
     ReportStage.research,
     ReportStage.charts,
     ReportStage.draft,
+    ReportStage.rebuttal,
     ReportStage.redteam,
     ReportStage.edit,
     ReportStage.audit,
@@ -479,6 +480,47 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             _write(wd / f"notes-{c['slug']}.md", result.text)
             _record(report.id, wd, result)
             _append_tool_outputs(wd, c["slug"], result)
+
+        # Pre-draft self-audit. Each analyst's notes get a Haiku grounding
+        # pass against their slice of the tool ledger -- ungrounded numbers
+        # are qualified or struck before the draft stage reads them.
+        # Best-effort: if the audit call fails, leave the original notes.
+        ledger = _read(wd / "tool-outputs.jsonl")
+        if ledger.strip():
+            try:
+                pre_auditor = Auditor(cost, audit=audit)
+                for c in contributors:
+                    notes_path = wd / f"notes-{c['slug']}.md"
+                    notes_md = _read(notes_path)
+                    if not notes_md.strip():
+                        continue
+                    try:
+                        pa_result = pre_auditor.pre_draft_audit(
+                            agent_slug=c["slug"], notes_md=notes_md,
+                            tool_outputs_jsonl=ledger,
+                        )
+                        if pa_result.text.strip():
+                            _write(notes_path, pa_result.text)
+                            _record(report.id, wd, pa_result)
+                    except Exception:  # noqa: BLE001
+                        log.exception("pre-draft audit failed for %s", c["slug"])
+            except Exception:  # noqa: BLE001
+                log.exception("pre-draft audit init failed (non-blocking)")
+
+        # Brief-coverage check. Map each numbered # QUESTIONS bullet to its
+        # status in the notes; gaps surface to the EIC at edit time.
+        # Best-effort: a failure here just means the EIC works without
+        # explicit coverage tagging.
+        try:
+            from api.agents.coverage import Coverage
+            coverage = Coverage(cost, audit=audit)
+            all_notes = _concat_notes(wd, contributors)
+            cov_result = coverage.check(brief=brief, notes=all_notes)
+            _write(wd / "coverage.md", cov_result.text)
+            _record(report.id, wd, cov_result)
+        except Exception:  # noqa: BLE001
+            log.exception("coverage check failed (non-blocking)")
+
         return _next_stage(stage)
 
     if stage == ReportStage.charts:
@@ -507,6 +549,66 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         for c, result in zip(contributors, results, strict=True):
             _write(wd / f"section-{c['slug']}.md", result.text)
             _record(report.id, wd, result)
+        return _next_stage(stage)
+
+    if stage == ReportStage.rebuttal:
+        # Each analyst sees the peer drafts and writes a one-paragraph
+        # reaction. The EIC consumes these at edit time as raw material for
+        # the DISAGREEMENT block. Best-effort: per-analyst failures are
+        # logged and dropped so a single rebuttal failure doesn't stall
+        # the report.
+        brief = _read(wd / "brief.md")
+        contributors = _resolved_contributors(report, brief)
+        # Skip if there's only one analyst -- rebutting yourself is a
+        # nonsense call. Same if no drafts landed.
+        sections_by_slug: dict[str, dict[str, str]] = {}
+        for c in contributors:
+            body_md = _read(wd / f"section-{c['slug']}.md")
+            if not body_md.strip():
+                continue
+            sections_by_slug[c["slug"]] = {
+                "author": c["name"],
+                "role": c["role"],
+                "body": _strip_heading(body_md),
+            }
+        if len(sections_by_slug) < 2:
+            _write(wd / "rebuttals.md", "_Rebuttal stage skipped: fewer than two analyst sections._\n")
+            return _next_stage(stage)
+
+        analysts_by_slug = {
+            c["slug"]: _make_analyst(c["slug"], cost, audit, models["analyst"])
+            for c in contributors if c["slug"] in sections_by_slug
+        }
+
+        def _rebut_call(slug: str):  # type: ignore[no-untyped-def]
+            me = sections_by_slug[slug]
+            peers = [
+                {"author": v["author"], "role": v["role"], "body": v["body"]}
+                for k, v in sections_by_slug.items() if k != slug
+            ]
+            return lambda: analysts_by_slug[slug].rebut(
+                brief=brief, my_section=me["body"],
+                peer_sections=peers, theme=report.theme,
+            )
+
+        slugs_in_order = [c["slug"] for c in contributors if c["slug"] in sections_by_slug]
+        rebuttal_results = _run_concurrently([_rebut_call(s) for s in slugs_in_order])
+
+        rebuttal_lines: list[str] = ["# Rebuttals\n"]
+        for slug, result in zip(slugs_in_order, rebuttal_results, strict=True):
+            text = (result.text or "").strip()
+            if not text or "(no substantive disagreement)" in text.lower():
+                continue
+            author = sections_by_slug[slug]["author"]
+            role = sections_by_slug[slug]["role"]
+            rebuttal_lines.append(f"## {author} — {role}\n\n{text}\n")
+            _record(report.id, wd, result)
+        _write(
+            wd / "rebuttals.md",
+            "\n".join(rebuttal_lines)
+            if len(rebuttal_lines) > 1
+            else "_All analysts agree -- no rebuttals._\n",
+        )
         return _next_stage(stage)
 
     if stage == ReportStage.redteam:
@@ -555,10 +657,30 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             })
         chart_summary = _list_charts(wd / "charts")
         bear_note = _read(wd / "redteam.md").strip()
+
+        # Cross-analyst rebuttals -- raw material for the DISAGREEMENT block.
+        rebuttals = _parse_rebuttals(_read(wd / "rebuttals.md"))
+
+        # Source-diversity flag. Computed off the running sources.json so the
+        # editor sees the same publisher distribution the renderer will end
+        # up persisting on the report row.
+        from api.citations import domain_distribution
+        top_dom, dom_share = domain_distribution(_read_sources(wd))
+        source_diversity: dict[str, object] | None = None
+        if top_dom and dom_share >= 0.40:
+            source_diversity = {"top_domain": top_dom, "top_share": dom_share}
+
+        # Brief-coverage gaps -- questions the research stage didn't answer.
+        from api.agents.coverage import gaps as _coverage_gaps
+        coverage_gaps_list = _coverage_gaps(brief, _read(wd / "coverage.md"))
+
         result = eic.edit(
             brief=brief, sections=sections,
             chart_summary=chart_summary,
             bear_note=bear_note or None,
+            rebuttals=rebuttals or None,
+            source_diversity=source_diversity,
+            coverage_gaps=coverage_gaps_list or None,
         )
         _write(wd / "edited.md", result.text)
         _record(report.id, wd, result)
@@ -828,6 +950,27 @@ def _strip_heading(md: str) -> str:
         if line.lstrip().startswith("## "):
             return "\n".join(lines[i + 1:]).lstrip("\n")
     return md
+
+
+_REBUTTAL_BLOCK_RE = re.compile(
+    r"^##\s+(?P<author>.+?)\s+(?:—|-+)\s+(?P<role>.+?)\n+(?P<body>.+?)(?=\n## |\Z)",
+    re.S | re.M,
+)
+
+
+def _parse_rebuttals(md: str) -> list[dict[str, str]]:
+    """Pull `## Author — Role\\n\\nbody` blocks out of rebuttals.md."""
+    out: list[dict[str, str]] = []
+    for m in _REBUTTAL_BLOCK_RE.finditer(md):
+        body = m.group("body").strip()
+        if not body:
+            continue
+        out.append({
+            "author": m.group("author").strip(),
+            "role": m.group("role").strip(),
+            "body": body,
+        })
+    return out
 
 
 def _list_charts(charts_dir: Path) -> str:
