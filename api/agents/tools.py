@@ -166,7 +166,54 @@ def make_chart_tool(out_dir: Path) -> Tool:
                 return pd.DataFrame(), "yfinance"
             close = df_full["Close"].dropna()
             return pd.DataFrame({series_or_ticker: close}), "yfinance"
-        raise ValueError(f"Unknown source: {source}. Use 'fred' or 'yfinance'.")
+        if source == "worldbank":
+            # Format: 'COUNTRY:INDICATOR' (e.g. 'US:NY.GDP.MKTP.KD.ZG'). Annual.
+            if ":" not in series_or_ticker:
+                raise ValueError(
+                    "worldbank source needs 'COUNTRY:INDICATOR' "
+                    "(e.g. 'US:NY.GDP.MKTP.KD.ZG')."
+                )
+            country, indicator = series_or_ticker.split(":", 1)
+            since = int(start[:4]) if start and len(start) >= 4 and start[:4].isdigit() else 2010
+            rows = worldbank.get_series(country, indicator, since=since)
+            if not rows:
+                return pd.DataFrame(), "World Bank"
+            # Worldbank returns descending; sort ascending so the line draws left-to-right.
+            sorted_rows = sorted(rows, key=lambda r: r.get("year") or 0)
+            idx = pd.to_datetime(
+                [f"{r['year']}-12-31" for r in sorted_rows if r.get("year") is not None]
+            )
+            vals = [r["value"] for r in sorted_rows if r.get("year") is not None]
+            return pd.DataFrame({series_or_ticker: vals}, index=idx), "World Bank"
+        if source == "eia":
+            # series_or_ticker is the EIA route (e.g. 'petroleum/pri/spt/data').
+            try:
+                rows = eia.get_series(series_or_ticker, frequency="monthly", limit=240)
+            except RuntimeError as e:
+                raise ValueError(str(e)) from e
+            if not rows:
+                return pd.DataFrame(), "EIA"
+            # EIA periods can be 'YYYY', 'YYYY-MM', 'YYYY-MM-DD'. Sort + parse leniently.
+            parsed: list[tuple[pd.Timestamp, float]] = []
+            for r in rows:
+                p = r.get("period")
+                v = r.get("value")
+                if p is None or v is None:
+                    continue
+                try:
+                    ts = pd.to_datetime(str(p))
+                    parsed.append((ts, float(v)))
+                except (ValueError, TypeError):
+                    continue
+            if not parsed:
+                return pd.DataFrame(), "EIA"
+            parsed.sort(key=lambda x: x[0])
+            idx = pd.DatetimeIndex([t for t, _ in parsed])
+            label = series_or_ticker.strip("/").removesuffix("/data") or "EIA"
+            return pd.DataFrame({label: [v for _, v in parsed]}, index=idx), "EIA"
+        raise ValueError(
+            f"Unknown source: {source}. Use 'fred', 'yfinance', 'worldbank', or 'eia'."
+        )
 
     def fn(
         chart_kind: str,
@@ -224,7 +271,8 @@ def make_chart_tool(out_dir: Path) -> Tool:
     return Tool(
         name="make_chart",
         description=(
-            "Generate a chart in the Forte house style. Backed by FRED (macro) or yfinance (prices). "
+            "Generate a chart in the Forte house style. Sources: 'fred' (US macro), "
+            "'yfinance' (prices), 'worldbank' (cross-country macro, annual), 'eia' (US energy). "
             "Kinds: 'line' (default), 'bar', 'regime' (line + shaded recessions; pass shaded='nber' or skip), "
             "'comparison' (dual-axis when compare_with is set), 'event' (line + vertical event markers). "
             "Saves a PNG plus a sibling .json sidecar that the dashboard can render interactively."
@@ -233,8 +281,15 @@ def make_chart_tool(out_dir: Path) -> Tool:
             "type": "object",
             "properties": {
                 "chart_kind": {"type": "string", "enum": ["line", "bar", "regime", "comparison", "event"]},
-                "source": {"type": "string", "enum": ["fred", "yfinance"]},
-                "series_or_ticker": {"type": "string", "description": "FRED series id (e.g. 'DGS10') or yfinance ticker (e.g. 'SPY')."},
+                "source": {"type": "string", "enum": ["fred", "yfinance", "worldbank", "eia"]},
+                "series_or_ticker": {
+                    "type": "string",
+                    "description": (
+                        "FRED series id (e.g. 'DGS10'), yfinance ticker (e.g. 'SPY'), "
+                        "worldbank 'COUNTRY:INDICATOR' (e.g. 'US:NY.GDP.MKTP.KD.ZG'), "
+                        "or EIA route (e.g. 'petroleum/pri/spt/data')."
+                    ),
+                },
                 "title": {"type": "string"},
                 "subtitle": {"type": "string"},
                 "filename": {"type": "string", "description": "PNG filename, e.g. 'rates.png'."},

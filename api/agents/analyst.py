@@ -18,8 +18,10 @@ from api.agents.tools import (
     gdelt_tool,
     github_repo_tool,
     github_search_tool,
+    hn_search_tool,
     openfda_labels_tool,
     openfda_recalls_tool,
+    reddit_hot_tool,
     uploaded_documents_tool,
     web_search_tool,
     wikipedia_tool,
@@ -94,6 +96,8 @@ Research / sentiment:
 - `arxiv_search` — research papers (AI / quant / biotech / physics)
 - `github_repo` / `github_search` — developer activity for tech themes
 - `gdelt_news` — global news search (broader than web_search)
+- `reddit_hot` — what retail / buy-side is actually talking about (subs: wallstreetbets, stocks, investing, SecurityAnalysis, options, Bogleheads, etc.)
+- `hn_search` — tech-adjacent sentiment (semis, AI, crypto, biotech, regulation)
 - `wikipedia_summary` — definitional and background context
 - `web_search` — current news, broker notes (Anthropic-managed)
 
@@ -125,6 +129,8 @@ Be opinionated; hedging without conviction is the failure mode. Output ~300-500 
             openfda_labels_tool(),
             openfda_recalls_tool(),
             defillama_tool(),
+            reddit_hot_tool(),
+            hn_search_tool(),
         ]
         if has_uploads and report_id is not None:
             tools.append(uploaded_documents_tool(report_id))

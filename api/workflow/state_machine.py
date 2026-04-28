@@ -339,6 +339,22 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
 
     if stage == ReportStage.brief:
         from api import house_view as house_view_mod
+        from api.agents.primer import Primer
+
+        # Pre-brief data primer. Cheap Haiku scan that anchors the brief to
+        # what the tape actually says today instead of training-time priors.
+        # Best-effort: if it fails, the EIC just writes the brief without it.
+        primer_text = ""
+        try:
+            primer_agent = Primer(cost, audit=audit)
+            pr = primer_agent.primer(report.theme, subtitle=report.subtitle)
+            primer_text = pr.text
+            _write(wd / "primer.md", primer_text)
+            _record(report.id, wd, pr)
+            _append_tool_outputs(wd, "primer", pr)
+        except Exception:  # noqa: BLE001
+            log.exception("primer stage failed (non-blocking)")
+
         eic = EditorInChief(cost, audit=audit, model=models["editor"])
         result = eic.write_brief(
             report.theme,
@@ -346,6 +362,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             available_contributors=get_roster(),
             past_reports=_past_reports_summary(exclude_id=report.id),
             house_view=house_view_mod.get(),
+            primer=primer_text or None,
         )
         _write(wd / "brief.md", result.text)
 
@@ -383,8 +400,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         # Track slugs that should end up on the report for stages downstream
         # of recruit. Starts with the brief's standing contributors; the
         # registry / fresh-hire branches each add their resolved slug.
-        from api import personas
-        from api import specialist_registry
+        from api import personas, specialist_registry
         from api.models import PersonaStatus
         parsed_brief = parse_brief(brief)
         resolved_slugs: list[str] = list(parsed_brief["contributor_slugs"])  # type: ignore[arg-type]
