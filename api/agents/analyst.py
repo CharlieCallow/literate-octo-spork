@@ -56,7 +56,7 @@ Run your research. Available tools:
 - `edgar_filings` — list recent SEC filings for a ticker
 - `web_search` — current news, headlines, broker notes (Anthropic-managed)
 
-Use whichever tools fit your beat. Stay in your voice. Write structured notes in markdown -- claims with evidence and sources. Be opinionated; hedging without conviction is the failure mode. Output ~300-500 words.
+Use whichever tools fit your beat. Stay in your voice. Write structured notes in markdown -- claims with evidence and sources. Cite inline: when a claim rests on a specific source, link it like `[short anchor text](https://exact-url)` so the renderer can turn it into a numbered footnote. Use real URLs from your tool results, never invent them. Be opinionated; hedging without conviction is the failure mode. Output ~300-500 words.
 """
         tools: list[Tool] = [
             fred_series_tool(),
@@ -88,6 +88,6 @@ YOUR NOTES:
 
 {notes}
 
-Output a single section in markdown. Start with a brief inline header (## <Section heading>). 200-400 words. Reference charts inline as `[chart: <filename>]` if you want one rendered (Data & Charts will produce them). Do not invent data -- only use figures from your notes.
+Output a single section in markdown. Start with a brief inline header (## <Section heading>). 200-400 words. Reference charts inline as `[chart: <filename>]` if you want one rendered (Data & Charts will produce them). Cite real sources inline using markdown links `[anchor text](https://url)` -- the renderer turns these into numbered footnotes. Do not invent data or URLs -- only use figures and links from your notes.
 """
         return self.run(prompt, max_tokens=2048)

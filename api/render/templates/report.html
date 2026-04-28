@@ -34,7 +34,7 @@
   <h2>Sources</h2>
   <ol>
     {% for s in sources %}
-    <li>
+    <li id="cite-{{ s.n }}" value="{{ s.n }}">
       <a href="{{ s.url }}">{{ s.title or s.url }}</a>
       <span class="muted-tag">— {{ s.source }}</span>
     </li>

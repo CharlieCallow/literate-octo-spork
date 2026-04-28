@@ -386,17 +386,24 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         with Session(engine) as session:
             r = session.get(Report, report.id)
             subtitle = r.subtitle if r else None
+
+        from api.citations import attach_inline_citations
+        raw_sections = _sections_for_render(parsed, wd)
+        cited_sections, ordered_sources = attach_inline_citations(
+            raw_sections, _read_sources(wd),
+        )
+
         render_pdf(
             out_path=out,
             title=report.theme.title() if report.theme.islower() else report.theme,
             subtitle=subtitle or parsed.get("opening", "").split("\n")[0][:120],
             date=date.today().isoformat(),
             contributors=contributors_credits,
-            sections=_sections_for_render(parsed, wd),
+            sections=cited_sections,
             house_view_top=parsed.get("house_view_top"),
             house_view_bottom=parsed.get("house_view_bottom"),
             read_minutes=8,
-            sources=_read_sources(wd),
+            sources=ordered_sources,
         )
         with Session(engine) as session:
             r = session.get(Report, report.id)
