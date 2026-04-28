@@ -120,6 +120,26 @@ def _today_spent() -> float:
     return sum(r.cost_usd for r in rows if r.created_at.date() == today)
 
 
+def _past_reports_summary(*, exclude_id: int | None = None, limit: int = 12) -> list[dict[str, str]]:
+    """List of recent done-stage reports, most recent first, used to anchor the
+    EIC so it doesn't fabricate a history of prior reports."""
+    with Session(engine) as session:
+        rows = session.exec(
+            select(Report)
+            .where(Report.stage == ReportStage.done)
+            .order_by(Report.created_at.desc())  # type: ignore[attr-defined]
+            .limit(limit + 1)  # +1 to absorb exclusion
+        ).all()
+    out: list[dict[str, str]] = []
+    for r in rows:
+        if exclude_id is not None and r.id == exclude_id:
+            continue
+        out.append({"theme": r.theme, "subtitle": r.subtitle or ""})
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _tracker(report: Report) -> CostTracker:
     from api import app_settings
     cap = report.budget_cap_usd if report.budget_cap_usd else app_settings.cost_per_report_usd()
@@ -272,6 +292,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             report.theme,
             subtitle=report.subtitle,
             available_contributors=get_roster(),
+            past_reports=_past_reports_summary(exclude_id=report.id),
         )
         _write(wd / "brief.md", result.text)
 

@@ -183,11 +183,15 @@ def make_chart_tool(out_dir: Path) -> Tool:
         if df.empty:
             return f"{source} returned no data for {series_or_ticker}"
 
-        # Optional second series for comparison/regime/event.
+        # Optional second series for comparison/regime/event. Use an inner join
+        # so the chart starts at the later of the two inception dates -- prevents
+        # a long tail of one series with no data for the other.
         if compare_with:
             df2, _ = _frame(source, compare_with, period=period, start=start, end=end)
             if not df2.empty:
-                df = df.join(df2, how="outer")
+                df = df.join(df2, how="inner").dropna()
+                if df.empty:
+                    return f"no overlapping data between {series_or_ticker} and {compare_with}"
 
         as_of = df.index[-1].date().isoformat() if len(df) else _date.today().isoformat()
         out_path = out_dir / filename

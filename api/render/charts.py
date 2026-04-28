@@ -35,15 +35,21 @@ def _style() -> None:
     mpl.style.use(str(STYLE_PATH))
 
 
-def _annotate_source(ax: plt.Axes, source: str, as_of: str) -> None:
-    ax.annotate(
-        f"Source: {source}. As of {as_of}.",
-        xy=(0, -0.18),
-        xycoords="axes fraction",
-        fontsize=9,
-        color=MUTED,
-        annotation_clip=False,
-    )
+def _layout(fig: plt.Figure, *, title: str, subtitle: str, source: str, as_of: str) -> None:
+    """Place title / subtitle / source attribution at deterministic figure
+    coordinates and lock the axes box. Avoids title/subtitle collisions that
+    happened when matplotlib's auto-layout interacted with bbox=tight."""
+    fig.text(0.06, 0.94, title, fontsize=14, fontweight="bold", color=NAVY, ha="left")
+    if subtitle:
+        fig.text(0.06, 0.895, subtitle, fontsize=11, color=MUTED, ha="left")
+    fig.text(0.06, 0.04, f"Source: {source}. As of {as_of}.", fontsize=9, color=MUTED, ha="left")
+    fig.subplots_adjust(top=0.83, bottom=0.16, left=0.07, right=0.95)
+
+
+def _annotate_source(ax: plt.Axes, source: str, as_of: str) -> None:  # legacy shim
+    """Kept for back-compat with older test scripts; new helpers use _layout."""
+    fig = ax.get_figure()
+    fig.text(0.06, 0.04, f"Source: {source}. As of {as_of}.", fontsize=9, color=MUTED, ha="left")
 
 
 def _label_last(ax: plt.Axes, series: pd.Series, color: str) -> None:
@@ -115,15 +121,11 @@ def line_chart(
         color = CHART_CYCLE[i % len(CHART_CYCLE)]
         ax.plot(df.index, df[col], color=color, label=col)
         _label_last(ax, df[col], color)
-
-    ax.set_title(title, loc="left")
-    ax.text(0.0, 1.04, subtitle, transform=ax.transAxes, fontsize=11, color=MUTED, ha="left", va="bottom")
     if y_label:
         ax.set_ylabel(y_label)
     if len(df.columns) > 4:
         ax.legend(loc="best")
-    _annotate_source(ax, source, as_of)
-    fig.tight_layout()
+    _layout(fig, title=title, subtitle=subtitle, source=source, as_of=as_of)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path)
     plt.close(fig)
@@ -148,10 +150,7 @@ def bar_chart(
         ax.barh(series.index.astype(str), series.values, color=NAVY)
     else:
         ax.bar(series.index.astype(str), series.values, color=NAVY)
-    ax.set_title(title, loc="left")
-    ax.text(0.0, 1.04, subtitle, transform=ax.transAxes, fontsize=11, color=MUTED, ha="left", va="bottom")
-    _annotate_source(ax, source, as_of)
-    fig.tight_layout()
+    _layout(fig, title=title, subtitle=subtitle, source=source, as_of=as_of)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path)
     plt.close(fig)
@@ -190,12 +189,9 @@ def regime_chart(
         _label_last(ax, df[col], color)
     for start, end in shaded:
         ax.axvspan(pd.to_datetime(start), pd.to_datetime(end), color=RULE, alpha=0.7, lw=0)
-    ax.set_title(title, loc="left")
-    ax.text(0.0, 1.04, subtitle, transform=ax.transAxes, fontsize=11, color=MUTED, ha="left", va="bottom")
     if len(df.columns) > 4:
         ax.legend(loc="best")
-    _annotate_source(ax, source, as_of)
-    fig.tight_layout()
+    _layout(fig, title=title, subtitle=subtitle, source=source, as_of=as_of)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path)
     plt.close(fig)
@@ -246,11 +242,7 @@ def comparison_chart(
         for i, col in enumerate(cols[1:], start=1):
             ax_left.plot(df.index, df[col], color=CHART_CYCLE[i % len(CHART_CYCLE)], label=col)
 
-    ax_left.set_title(title, loc="left")
-    ax_left.text(0.0, 1.04, subtitle, transform=ax_left.transAxes, fontsize=11,
-                 color=MUTED, ha="left", va="bottom")
-    _annotate_source(ax_left, source, as_of)
-    fig.tight_layout()
+    _layout(fig, title=title, subtitle=subtitle, source=source, as_of=as_of)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path)
     plt.close(fig)
@@ -303,12 +295,9 @@ def event_chart(
                 va="top",
             )
 
-    ax.set_title(title, loc="left")
-    ax.text(0.0, 1.04, subtitle, transform=ax.transAxes, fontsize=11, color=MUTED, ha="left", va="bottom")
     if len(df.columns) > 4:
         ax.legend(loc="best")
-    _annotate_source(ax, source, as_of)
-    fig.tight_layout()
+    _layout(fig, title=title, subtitle=subtitle, source=source, as_of=as_of)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path)
     plt.close(fig)

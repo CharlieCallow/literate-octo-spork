@@ -114,8 +114,19 @@ li { margin: 0 0 4pt; }
   margin-top: 4pt;
 }
 
-figure { margin: 12pt 0; page-break-inside: avoid; }
-figure img { width: 100%; height: auto; }
+figure {
+  margin: 12pt 0;
+  padding: 0;
+  width: 100%;
+  display: block;
+  page-break-inside: avoid;
+}
+figure img {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+}
 
 table { width: 100%; border-collapse: collapse; margin: 10pt 0; font-size: 10pt; page-break-inside: avoid; }
 table th { background: var(--forte-navy); color: #FFF; font-weight: 600; text-align: left; padding: 6pt 8pt; }

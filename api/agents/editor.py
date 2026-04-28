@@ -55,14 +55,28 @@ Direct, not nice. No headings, no list -- just a paragraph. Stay in your voice.
         *,
         subtitle: str | None = None,
         available_contributors: list[dict[str, str]] | None = None,
+        past_reports: list[dict[str, str]] | None = None,
     ) -> AgentResult:
         roster = available_contributors or []
         roster_blob = "\n".join(f"- `{c['slug']}` — {c['name']} ({c['role']})" for c in roster) or "(none)"
+
+        if past_reports:
+            past_blob = "\n".join(
+                f"- {r['theme']}" + (f" -- {r['subtitle']}" if r.get('subtitle') else "")
+                for r in past_reports
+            )
+        else:
+            past_blob = "(none -- this is the firm's first published report)"
 
         prompt = f"""A new theme has been commissioned for a Forte Research report. Write a structured brief.
 
 THEME: {theme}
 SUBTITLE: {subtitle or "(propose one)"}
+
+PRIOR PUBLISHED REPORTS (most recent first):
+{past_blob}
+
+Do NOT reference past reports that aren't on the list above. If the list is empty, this really is the first report -- don't pretend the firm has prior history. Anchor only to claims you can verify with tool calls or that appear in the past list.
 
 AVAILABLE CONTRIBUTORS:
 {roster_blob}
