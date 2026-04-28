@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -331,6 +332,176 @@ def list_audit(
         )
         for r in rows
     ]
+
+
+# ----- Public share links -----
+
+class ShareInfo(BaseModel):
+    """Admin view of a report's share state. Returned by the auth-gated routes
+    so the dashboard can show the URL + offer rotate/revoke."""
+    report_id: int
+    share_token: str | None
+    shared_at: datetime | None
+
+
+def _share_info(r: Report) -> ShareInfo:
+    shared_at = r.shared_at
+    if shared_at is not None and shared_at.tzinfo is None:
+        shared_at = shared_at.replace(tzinfo=UTC)
+    return ShareInfo(report_id=r.id or 0, share_token=r.share_token, shared_at=shared_at)
+
+
+@router.get("/{report_id}/share", response_model=ShareInfo, dependencies=[Depends(require_auth)])
+def get_share(report_id: int, session: Session = Depends(get_session)) -> ShareInfo:
+    report = session.get(Report, report_id)
+    if not report:
+        raise HTTPException(404, "Report not found")
+    return _share_info(report)
+
+
+@router.post("/{report_id}/share", response_model=ShareInfo, dependencies=[Depends(require_auth)])
+def create_share(
+    report_id: int,
+    rotate: bool = False,
+    session: Session = Depends(get_session),
+) -> ShareInfo:
+    """Mint a share token if absent. Pass ?rotate=true to force a fresh one
+    (invalidates the existing link)."""
+    report = session.get(Report, report_id)
+    if not report:
+        raise HTTPException(404, "Report not found")
+    if report.share_token is None or rotate:
+        report.share_token = secrets.token_urlsafe(32)
+        report.shared_at = datetime.now(UTC)
+        session.add(report)
+        session.commit()
+        session.refresh(report)
+    return _share_info(report)
+
+
+@router.delete("/{report_id}/share", response_model=ShareInfo, dependencies=[Depends(require_auth)])
+def revoke_share(report_id: int, session: Session = Depends(get_session)) -> ShareInfo:
+    report = session.get(Report, report_id)
+    if not report:
+        raise HTTPException(404, "Report not found")
+    report.share_token = None
+    report.shared_at = None
+    session.add(report)
+    session.commit()
+    session.refresh(report)
+    return _share_info(report)
+
+
+class PublicReport(BaseModel):
+    """Subset of Report that's safe to expose unauthenticated. Excludes cost,
+    stage, error, audit, jobs -- anything the recipient has no business seeing."""
+    id: int
+    theme: str
+    subtitle: str | None
+    contributor_slugs: list[str]
+    created_at: datetime
+    has_pdf: bool
+
+
+def _load_shared_report(report_id: int, token: str, session: Session) -> Report:
+    """Look up a report by id and verify the token in constant time. Returns
+    404 (not 403) on mismatch so an attacker can't enumerate which IDs are
+    shared vs unshared."""
+    report = session.get(Report, report_id)
+    if report is None or not report.share_token:
+        raise HTTPException(404, "Not found")
+    if not secrets.compare_digest(report.share_token, token):
+        raise HTTPException(404, "Not found")
+    return report
+
+
+@router.get("/{report_id}/share/{token}", response_model=PublicReport)
+def get_public_report(
+    report_id: int,
+    token: str,
+    session: Session = Depends(get_session),
+) -> PublicReport:
+    report = _load_shared_report(report_id, token, session)
+    created_at = report.created_at if report.created_at.tzinfo else report.created_at.replace(tzinfo=UTC)
+    has_pdf = bool(report.pdf_path) or (
+        report.stage == ReportStage.done and storage.object_exists(report_id, "report.pdf")
+    )
+    return PublicReport(
+        id=report.id or 0,
+        theme=report.theme,
+        subtitle=report.subtitle,
+        contributor_slugs=list(report.contributor_slugs or []),
+        created_at=created_at,
+        has_pdf=has_pdf,
+    )
+
+
+@router.get("/{report_id}/share/{token}/pdf")
+def get_public_pdf(report_id: int, token: str, session: Session = Depends(get_session)):  # type: ignore[no-untyped-def]
+    report = _load_shared_report(report_id, token, session)
+    if report.pdf_path:
+        path = Path(report.pdf_path)
+        if path.exists():
+            return FileResponse(
+                path,
+                media_type="application/pdf",
+                filename=path.name,
+                headers={
+                    "Content-Disposition": f'inline; filename="{path.name}"',
+                    "Cache-Control": "public, max-age=3600",
+                },
+            )
+    if report.stage == ReportStage.done and storage.object_exists(report_id, "report.pdf"):
+        url = storage.signed_url(report_id, "report.pdf")
+        if url:
+            return RedirectResponse(url, status_code=302)
+    raise HTTPException(404, "PDF not ready")
+
+
+@router.get("/{report_id}/share/{token}/charts")
+def list_public_chart_files(
+    report_id: int,
+    token: str,
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    _load_shared_report(report_id, token, session)
+    from api.workflow.state_machine import working_dir
+    wd = working_dir(report_id)
+    charts_dir = wd / "charts"
+    local_files = sorted(charts_dir.glob("*.png")) if charts_dir.exists() else []
+    if local_files:
+        return [
+            {"filename": p.name, "has_json": p.with_suffix(".json").exists()}
+            for p in local_files
+        ]
+    r2_files = storage.list_chart_files(report_id)
+    return [
+        {"filename": name, "has_json": storage.object_exists(report_id, "charts", name.replace(".png", ".json"))}
+        for name in r2_files
+    ]
+
+
+@router.get("/{report_id}/share/{token}/chart.json")
+def get_public_chart_json(
+    report_id: int,
+    token: str,
+    filename: str,
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    import json as _json
+
+    _load_shared_report(report_id, token, session)
+    from api.workflow.state_machine import working_dir
+    wd = working_dir(report_id)
+    base = filename.rsplit(".", 1)[0]
+    json_path = wd / "charts" / f"{base}.json"
+    if not json_path.exists():
+        fetched = storage.fetch_to_local(report_id, wd, "charts", f"{base}.json")
+        if fetched is None:
+            raise HTTPException(404, "Chart sidecar not found")
+        json_path = fetched
+    payload: dict[str, object] = _json.loads(json_path.read_text(encoding="utf-8"))
+    return payload
 
 
 @router.post("/{report_id}/cancel", response_model=ReportOut, dependencies=[Depends(require_auth)])

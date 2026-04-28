@@ -4,6 +4,7 @@ import { AuditLog } from "@/components/AuditLog";
 import { AuthGate } from "@/components/Auth";
 import { InteractiveCharts } from "@/components/InteractiveCharts";
 import { RunStatus } from "@/components/RunStatus";
+import { ShareDialog } from "@/components/ShareDialog";
 import { StageBreakdown } from "@/components/StageBreakdown";
 import { api, type Job, type Report, type ReportStage } from "@/lib/api";
 
@@ -20,6 +21,7 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
   const [report, setReport] = useState<Report | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -81,6 +83,14 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
             </p>
 
             <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {report.stage === "done" && (
+                <button
+                  onClick={() => setShareOpen(true)}
+                  style={{ padding: "3px 12px", fontSize: 12 }}
+                >
+                  Share
+                </button>
+              )}
               {!TERMINAL_STAGES.has(report.stage) && (
                 <button onClick={cancel} style={{ padding: "3px 12px", fontSize: 12, background: "#FFF", color: "var(--forte-ink)", border: "1px solid var(--forte-rule)" }}>
                   Cancel
@@ -169,6 +179,7 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
           )}
         </>
       )}
+      {shareOpen && report && <ShareDialog reportId={report.id} onClose={() => setShareOpen(false)} />}
     </AuthGate>
   );
 }

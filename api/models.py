@@ -52,6 +52,11 @@ class Report(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
     state: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+    # Public share link. Null = not shared. The token is a URL-safe random
+    # string; the shared_at timestamp tracks when the link was minted (for UI
+    # only -- it's not used for expiry).
+    share_token: str | None = Field(default=None, index=True)
+    shared_at: datetime | None = None
 
 
 class Job(SQLModel, table=True):
