@@ -64,7 +64,11 @@ def run_scout() -> ScoutRun:
     scout = Scout(cost=cost)
 
     try:
-        result = scout.run_daily_digest(recent_headlines=prior)
+        from api import tagger as tagger_mod
+        result = scout.run_daily_digest(
+            recent_headlines=prior,
+            recent_report_themes=tagger_mod.recent_themes(),
+        )
     except Exception as e:  # noqa: BLE001
         log.exception("scout digest failed")
         with Session(engine) as session:

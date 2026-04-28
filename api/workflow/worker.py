@@ -2,7 +2,8 @@
 
 Catches SIGINT and SIGTERM so it can finish the current job before exiting.
 Also fires the daily Scout digest if SCOUT_AUTO_RUN is on and the configured
-local time has passed today."""
+local time has passed today, and grades unresolved performance-ledger calls
+on a weekly cadence."""
 
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ import contextlib
 import logging
 import signal
 import time
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from types import FrameType
 
 from api.db import init_db
@@ -47,6 +48,30 @@ def _maybe_run_scheduled_scout(log: logging.Logger) -> None:
         log.exception("scheduled Scout digest failed")
 
 
+# Performance-ledger grading runs at most once a week. The first run after
+# any unresolved call ages past its horizon will pick it up; we don't need
+# tighter cadence than that.
+_WEEKLY = timedelta(days=7)
+
+
+def _maybe_grade_calls(log: logging.Logger) -> None:
+    try:
+        from api import calls
+    except Exception:  # noqa: BLE001
+        return  # the calls module / tables may not exist on a stale deploy
+    last = calls.last_evaluation_at()
+    if last is not None:
+        last_aware = last if last.tzinfo else last.replace(tzinfo=UTC)
+        if datetime.now(UTC) - last_aware < _WEEKLY:
+            return
+    log.info("weekly call-evaluation kicking off")
+    try:
+        n = calls.evaluate_due()
+        log.info("graded %d due calls", n)
+    except Exception:  # noqa: BLE001
+        log.exception("call evaluation failed")
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s -- %(message)s")
     init_db()
@@ -69,6 +94,7 @@ def main() -> None:
         job = claim_one_job()
         if job is None:
             _maybe_run_scheduled_scout(log)
+            _maybe_grade_calls(log)
             for _ in range(int(POLL_INTERVAL_S * 10)):
                 if _should_stop:
                     break

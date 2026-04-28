@@ -21,9 +21,21 @@ class Scout(Agent):
             **kwargs,  # type: ignore[arg-type]
         )
 
-    def run_daily_digest(self, recent_headlines: list[str] | None = None) -> AgentResult:
+    def run_daily_digest(
+        self,
+        recent_headlines: list[str] | None = None,
+        recent_report_themes: list[str] | None = None,
+    ) -> AgentResult:
         prior = "\n".join(f"- {h}" for h in (recent_headlines or [])[:30])
         subs = ", ".join(DEFAULT_SUBREDDITS)
+        # Theme graph: tags from the firm's recent published reports. The
+        # Scout uses these to weight natural follow-ups higher than cold
+        # themes -- the connective tissue between yesterday's report and
+        # today's pitch.
+        follow_up_blob = (
+            "\n".join(f"- {t}" for t in recent_report_themes[:20])
+            if recent_report_themes else "(none -- no prior reports tagged yet)"
+        )
         prompt = f"""You are running the daily morning scan for Forte Research. Surface the 10 most interesting themes for today's note: things that are moving, things the buyside is talking about, things that are underpriced or just-starting narratives.
 
 You have three scan tools:
@@ -32,6 +44,11 @@ You have three scan tools:
 - `hn_search` -- tech-adjacent themes (semis, AI, crypto, biotech, regulation).
 
 Use a mix. Don't lean only on web_search.
+
+THE FIRM'S RECENT WORK (covered in the past 8 reports):
+{follow_up_blob}
+
+When a candidate theme is a natural follow-up to one of the above (a second-order effect, a regime change in the same trade, a name you'd buy if a previous thesis is right) WEIGHT IT HIGHER. Connective tissue across the firm's reports is what makes Forte feel like a research firm, not a daily-digest mill. Don't force it -- but if a candidate genuinely extends past work, give it priority over a cold start.
 
 AVOID REPEATING THESE RECENTLY SURFACED THEMES:
 {prior or "(no prior themes -- this is your first run)"}

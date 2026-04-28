@@ -26,6 +26,7 @@ class ReportStage(str, Enum):
     audit = "audit"      # ground every number in the edited prose against tool outputs
     render = "render"
     feedback = "feedback"
+    housekeeping = "housekeeping"  # house view update, theme tags, calls, voice stats
     done = "done"
     failed = "failed"
     cancelled = "cancelled"
@@ -47,6 +48,11 @@ class Report(SQLModel, table=True):
     budget_cap_usd: float | None = None  # overrides settings.cost_per_report_usd if set
     team_override: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
     contributor_slugs: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    # Theme graph: tickers + themes mentioned in the published report.
+    # Populated in the housekeeping stage; read by the Scout to weight
+    # natural follow-ups in the daily digest.
+    mentioned_tickers: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    mentioned_themes: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
     stage: ReportStage = Field(default=ReportStage.queued, index=True)
     error: str | None = None
     pdf_path: str | None = None
@@ -181,6 +187,71 @@ class UploadedDocument(SQLModel, table=True):
     summary: str = ""           # short head-of-doc snippet for the listing tool
     extracted_text: str = ""    # full extracted plaintext (chunked on read)
     created_at: datetime = Field(default_factory=_now)
+
+
+class HouseView(SQLModel, table=True):
+    """Single-row rolling firm stance. The brief stage loads it into the EIC's
+    prompt; the housekeeping stage rewrites it after every report. id=1 always."""
+
+    __tablename__ = "house_view"
+
+    id: int = Field(default=1, primary_key=True)
+    markdown: str = ""
+    updated_at: datetime = Field(default_factory=_now)
+    last_report_id: int | None = Field(default=None, foreign_key="reports.id")
+
+
+class CallDirection(str, Enum):
+    long = "long"
+    short = "short"
+    fade = "fade"
+    avoid = "avoid"
+
+
+class CallOutcome(str, Enum):
+    hit = "hit"
+    miss = "miss"
+    partial = "partial"
+
+
+class Call(SQLModel, table=True):
+    """A structured forecast extracted from a published report. Weekly cron
+    grades unresolved calls past their horizon against current prices."""
+
+    __tablename__ = "calls"
+
+    id: int | None = Field(default=None, primary_key=True)
+    report_id: int = Field(foreign_key="reports.id", index=True)
+    contributor_slug: str = Field(index=True)
+    asset: str  # yfinance ticker, e.g. 'SPY', 'CCJ', 'BTC-USD'
+    direction: CallDirection
+    horizon_days: int = 90
+    target_level: float | None = None
+    conviction: int = 3  # 1-5 from the analyst's {cN} tag
+    claim_text: str = ""  # short prose snippet from the report
+    made_at: datetime = Field(default_factory=_now, index=True)
+    price_at_call: float | None = None
+    evaluated_at: datetime | None = None
+    price_at_evaluation: float | None = None
+    outcome: CallOutcome | None = None
+
+
+class PersonaVoiceStat(SQLModel, table=True):
+    """One row per (persona, report). Trailing windows of these power the
+    drift-detection alert: voice flattening towards the firm mean is the
+    failure mode the spec calls out."""
+
+    __tablename__ = "persona_voice_stats"
+
+    id: int | None = Field(default=None, primary_key=True)
+    report_id: int = Field(foreign_key="reports.id", index=True)
+    persona_slug: str = Field(index=True)
+    n_words: int = 0
+    mean_sentence_words: float = 0.0
+    hedge_ratio: float = 0.0           # hedge words / sentences
+    emdash_per_1k: float = 0.0          # em-dashes per 1000 words
+    conviction_density: float = 0.0     # {c4}/{c5} tags per 100 sentences
+    created_at: datetime = Field(default_factory=_now, index=True)
 
 
 class Persona(SQLModel, table=True):

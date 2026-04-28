@@ -40,6 +40,7 @@ STAGE_ORDER: list[ReportStage] = [
     ReportStage.audit,
     ReportStage.render,
     ReportStage.feedback,
+    ReportStage.housekeeping,
     ReportStage.done,
 ]
 
@@ -337,12 +338,14 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
     models = _models_for(report.mode)
 
     if stage == ReportStage.brief:
+        from api import house_view as house_view_mod
         eic = EditorInChief(cost, audit=audit, model=models["editor"])
         result = eic.write_brief(
             report.theme,
             subtitle=report.subtitle,
             available_contributors=get_roster(),
             past_reports=_past_reports_summary(exclude_id=report.id),
+            house_view=house_view_mod.get(),
         )
         _write(wd / "brief.md", result.text)
 
@@ -641,6 +644,80 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             refresh_recommendations()
         except Exception:  # noqa: BLE001
             log.exception("recruiter review failed (non-blocking)")
+        return _next_stage(stage)
+
+    if stage == ReportStage.housekeeping:
+        # Close-the-loop pass: update the rolling house view, tag the report,
+        # extract structured calls, capture voice stats. Each step is
+        # best-effort -- a failure in one shouldn't prevent the others.
+        from api import calls as calls_mod
+        from api import house_view as house_view_mod
+        from api import tagger as tagger_mod
+        from api import voice_stats as voice_mod
+
+        # Prefer the audited prose for tagging / call extraction; fall back
+        # to plain edited if the audit was skipped.
+        prose = _read(wd / "audited.md").strip() or _read(wd / "edited.md")
+        prose = _strip_conviction_tags(prose)
+        brief = _read(wd / "brief.md")
+        contributors = _resolved_contributors(report, brief)
+
+        # 1. House view -- EIC voice, expensive but central.
+        if prose.strip():
+            try:
+                eic = EditorInChief(cost, audit=audit, model=models["editor"])
+                hv = eic.update_house_view(
+                    prior_view=house_view_mod.get(),
+                    theme=report.theme,
+                    edited_report=prose,
+                )
+                house_view_mod.upsert(hv.text, last_report_id=report.id)
+                _record(report.id, wd, hv)
+                _write(wd / "house-view-after.md", hv.text)
+            except Exception:  # noqa: BLE001
+                log.exception("house view update failed (non-blocking)")
+
+        # 2. Theme + ticker tagger (Haiku).
+        if prose.strip():
+            try:
+                tagger = tagger_mod.Tagger(cost, audit=audit)
+                tag_result = tagger.tag(prose=prose)
+                tickers, themes = tagger_mod.parse(tag_result.text)
+                tagger_mod.persist(report.id, tickers, themes)
+                _record(report.id, wd, tag_result)
+            except Exception:  # noqa: BLE001
+                log.exception("theme tagging failed (non-blocking)")
+
+        # 3. Performance ledger -- structured calls (Haiku).
+        if prose.strip():
+            try:
+                extractor = calls_mod.CallExtractor(cost, audit=audit)
+                ext_result = extractor.extract(
+                    prose=prose,
+                    contributor_slugs=[c["slug"] for c in contributors],
+                )
+                parsed_calls = calls_mod.parse_extracted(ext_result.text)
+                # Filter to known contributors so a hallucinated slug doesn't
+                # poison the ledger.
+                slug_set = {c["slug"] for c in contributors}
+                clean = [c for c in parsed_calls if c["contributor_slug"] in slug_set]
+                n = calls_mod.persist(report.id, clean)
+                _record(report.id, wd, ext_result)
+                log.info("extracted %d calls for report %s", n, report.id)
+            except Exception:  # noqa: BLE001
+                log.exception("call extraction failed (non-blocking)")
+
+        # 4. Voice stats -- pure Python, per contributor's pre-edit draft.
+        for c in contributors:
+            try:
+                draft = _strip_heading(_read(wd / f"section-{c['slug']}.md"))
+                if not draft.strip():
+                    continue
+                metrics = voice_mod.compute(draft)
+                voice_mod.record(report.id, c["slug"], metrics)
+            except Exception:  # noqa: BLE001
+                log.exception("voice stats failed for %s", c["slug"])
+
         return _next_stage(stage)
 
     return ReportStage.done

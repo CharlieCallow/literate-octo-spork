@@ -49,6 +49,43 @@ Direct, not nice. No headings, no list -- just a paragraph. Stay in your voice.
 """
         return self.run(prompt, max_tokens=512)
 
+    def update_house_view(
+        self,
+        *,
+        prior_view: str,
+        theme: str,
+        edited_report: str,
+    ) -> AgentResult:
+        """Rewrite the rolling house view after a report ships.
+
+        The prior view goes in. The just-published report goes in. The new
+        view comes back -- same structure (Rates, Equity, Dollar/FX, Top
+        themes), updated where this report changed our stance, untouched
+        where it didn't. The whole point is that the next brief sees a
+        coherent thread of firm thinking, not a fresh start every time."""
+        prompt = f"""You are the Editor-in-Chief. After every published report you rewrite the firm's rolling house view -- a single document that captures Forte's current stance on rates, equities, dollar/FX, and top themes. The next report's brief loads this; you (or your future self) must reconcile or contradict it explicitly when starting the next assignment.
+
+PRIOR HOUSE VIEW:
+
+{prior_view}
+
+JUST-PUBLISHED REPORT (theme: {theme}):
+
+{edited_report}
+
+Rewrite the house view. Rules:
+- Keep the EXACT same heading structure: "# Forte House View", then "## Rates path", "## Equity stance", "## Dollar / FX", "## Top themes", "## Last updated".
+- Only change a section if this report has something new to say about it. If the report didn't touch the dollar, copy the prior dollar text verbatim.
+- Each section: 1-3 short sentences. No essay-length commentary. The house view is a memo, not a report.
+- Be specific: "long the conversion bottleneck, fading the spot uranium chase" beats "constructive on uranium". Numbers and levels where they matter.
+- Top themes: 3-5 bullets, each one a noun phrase + one-line take. No more.
+- "Last updated" section: just write the report theme and an em-dash, e.g. "Nuclear renaissance — added the bottleneck-not-pounds framing."
+- Stay in your voice. Dry, senior, slightly impatient.
+
+Output the full updated house view in markdown, nothing else.
+"""
+        return self.run(prompt, max_tokens=1024, max_iters=1)
+
     def write_brief(
         self,
         theme: str,
@@ -56,6 +93,7 @@ Direct, not nice. No headings, no list -- just a paragraph. Stay in your voice.
         subtitle: str | None = None,
         available_contributors: list[dict[str, str]] | None = None,
         past_reports: list[dict[str, str]] | None = None,
+        house_view: str | None = None,
     ) -> AgentResult:
         roster = available_contributors or []
         roster_blob = "\n".join(f"- `{c['slug']}` — {c['name']} ({c['role']})" for c in roster) or "(none)"
@@ -68,6 +106,15 @@ Direct, not nice. No headings, no list -- just a paragraph. Stay in your voice.
         else:
             past_blob = "(none -- this is the firm's first published report)"
 
+        house_view_blob = (
+            f"\nFIRM HOUSE VIEW (rolling memo updated after every report):\n\n{house_view}\n\n"
+            "When you write the brief, RECONCILE OR CONTRADICT this view explicitly. "
+            "If the new theme aligns with the current stance, say so and build on it. "
+            "If it cuts against it, name the conflict and frame the report as a "
+            "deliberate revisit, not a fresh thought. The point of the rolling "
+            "view is to make Forte's narrative coherent across reports.\n"
+            if house_view and house_view.strip() else ""
+        )
         prompt = f"""A new theme has been commissioned for a Forte Research report. Write a structured brief.
 
 THEME: {theme}
@@ -75,7 +122,7 @@ SUBTITLE: {subtitle or "(propose one)"}
 
 PRIOR PUBLISHED REPORTS (most recent first):
 {past_blob}
-
+{house_view_blob}
 Do NOT reference past reports that aren't on the list above. If the list is empty, this really is the first report -- don't pretend the firm has prior history. Anchor only to claims you can verify with tool calls or that appear in the past list.
 
 AVAILABLE CONTRIBUTORS:
