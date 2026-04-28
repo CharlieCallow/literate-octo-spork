@@ -149,9 +149,29 @@ table.kv tr:nth-child(even) td { background: transparent; }
 .disclosures { font-size: 9pt; color: var(--forte-muted); }
 .disclosures h2 { color: var(--forte-muted); border-top-color: var(--forte-rule); }
 
-.sources { font-size: 9.5pt; color: var(--forte-ink); }
-.sources h2 { color: var(--forte-navy); border-top-color: var(--forte-rule); margin-top: 18pt; }
-.sources ol { margin: 0 0 12pt 18pt; padding: 0; }
-.sources li { margin: 0 0 4pt; line-height: 1.4; word-break: break-word; }
+.sources {
+  font-size: 9pt;
+  color: var(--forte-ink);
+  page-break-before: always;  /* Sources start on their own page. */
+}
+.sources h2 {
+  color: var(--forte-navy);
+  border-top-color: var(--forte-rule);
+  margin-top: 0;
+}
+.sources ol {
+  margin: 0 0 12pt 18pt;
+  padding: 0;
+  /* Two-column layout so longer source lists stay on a single page. */
+  column-count: 2;
+  column-gap: 18pt;
+  column-rule: 1px solid var(--forte-rule);
+}
+.sources li {
+  margin: 0 0 5pt;
+  line-height: 1.35;
+  word-break: break-word;
+  break-inside: avoid;  /* Don't split a single source between columns. */
+}
 .sources a { color: var(--forte-purple); text-decoration: none; }
-.sources .muted-tag { color: var(--forte-muted); font-size: 9pt; margin-left: 6px; }
+.sources .muted-tag { color: var(--forte-muted); font-size: 8pt; margin-left: 4px; }

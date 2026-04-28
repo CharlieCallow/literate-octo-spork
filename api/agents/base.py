@@ -50,6 +50,19 @@ class AgentResult:
     transcript: list[dict[str, Any]] = field(default_factory=list)
 
 
+# Anthropic's web_search sometimes emits citation markup the model doesn't fully
+# strip on its way out: <antcite index="A-B">text</antcite>, plus mangled
+# variants like <anite ...> / <ite ...>. They land verbatim in agent output.
+# Strip them before persisting so they never appear in the PDF.
+import re as _re  # noqa: E402
+
+_CITE_TAG_RE = _re.compile(r"</?(?:antcite|cite|anite|ite)\b[^>]*>", _re.IGNORECASE)
+
+
+def sanitize_agent_text(text: str) -> str:
+    return _CITE_TAG_RE.sub("", text)
+
+
 def _extract_server_citations(content_blocks: Any, into: list[Citation]) -> None:
     """Pull URLs out of web_search_tool_result blocks in a model response."""
     for block in content_blocks:
@@ -196,7 +209,7 @@ class Agent:
             if resp.stop_reason != "tool_use":
                 text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
                 return AgentResult(
-                    text=text.strip(),
+                    text=sanitize_agent_text(text).strip(),
                     cost_usd=total_cost,
                     citations=citations,
                     transcript=transcript,

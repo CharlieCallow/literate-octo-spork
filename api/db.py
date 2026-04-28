@@ -53,6 +53,31 @@ def init_db() -> None:
     # proper fix). Clear pdf_path on rows whose file is gone so the dashboard
     # doesn't show broken iframe links.
     _clear_stale_pdf_paths()
+    _scrub_report_subtitles()
+
+
+def _scrub_report_subtitles() -> None:
+    """Strip leftover <antcite> / <cite> / mangled variants from subtitles
+    written by older builds before the agent-output sanitizer existed."""
+    from sqlmodel import select
+
+    from api.agents.base import sanitize_agent_text
+    from api.models import Report
+    with Session(engine) as session:
+        rows = session.exec(
+            select(Report).where(Report.subtitle.is_not(None))  # type: ignore[union-attr]
+        ).all()
+        changed = 0
+        for r in rows:
+            if not r.subtitle:
+                continue
+            cleaned = sanitize_agent_text(r.subtitle).strip()
+            if cleaned != r.subtitle:
+                r.subtitle = cleaned
+                session.add(r)
+                changed += 1
+        if changed:
+            session.commit()
 
 
 def _clear_stale_pdf_paths() -> None:
