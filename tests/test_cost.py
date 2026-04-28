@@ -37,3 +37,23 @@ def test_under_caps_returns_spend() -> None:
     assert spend == pytest.approx(0.06)  # 10k * $1/M + 10k * $5/M
     assert t.report_spent == spend
     assert t.day_spent == spend
+
+
+def test_cache_read_billed_at_one_tenth_of_input() -> None:
+    # Cache hits cost 10% of base input price, so 1M cache-read Sonnet tokens
+    # ($3/M base) = $0.30, not $3.00.
+    spend = cost_for(
+        "claude-sonnet-4-6",
+        Usage(input_tokens=0, output_tokens=0, cache_read_tokens=1_000_000),
+    )
+    assert spend == pytest.approx(0.30)
+
+
+def test_cache_creation_billed_at_125_percent_of_input() -> None:
+    # 5-minute cache writes cost 1.25x base input. 1M Sonnet creation tokens
+    # = $3.75.
+    spend = cost_for(
+        "claude-sonnet-4-6",
+        Usage(input_tokens=0, output_tokens=0, cache_creation_tokens=1_000_000),
+    )
+    assert spend == pytest.approx(3.75)
