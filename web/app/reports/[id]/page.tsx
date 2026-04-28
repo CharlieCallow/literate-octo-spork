@@ -144,6 +144,24 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
                 <a href={api.pdfUrl(report.id)}>Download PDF</a>
               </p>
             </div>
+          ) : report.stage === "done" ? (
+            <div className="card">
+              <p className="muted">
+                PDF for this report is no longer on disk -- typically a Railway
+                rebuild wiped it. The full re-render needs to start from the
+                brief stage.
+              </p>
+              <button
+                onClick={() => {
+                  if (window.confirm("Re-run from brief? This regenerates the report (re-charges API cost) but produces a fresh PDF.")) {
+                    resume("brief", true);
+                  }
+                }}
+                style={{ padding: "4px 12px", fontSize: 12 }}
+              >
+                Re-run from brief
+              </button>
+            </div>
           ) : (
             <div className="card">
               <p className="muted">PDF not ready yet. Auto-refreshing every 3s.</p>

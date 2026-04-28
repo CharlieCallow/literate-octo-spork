@@ -141,6 +141,11 @@ def get_pdf(report_id: int, session: Session = Depends(get_session)) -> FileResp
         raise HTTPException(404, "PDF not ready")
     path = Path(report.pdf_path)
     if not path.exists():
+        # Files were wiped (typically by a Railway rebuild). Clear pdf_path so
+        # the UI stops trying to embed it; user can resume from brief.
+        report.pdf_path = None
+        session.add(report)
+        session.commit()
         raise HTTPException(404, "PDF missing on disk")
     return FileResponse(
         path,
@@ -229,7 +234,11 @@ def resume(
     report = session.get(Report, report_id)
     if not report:
         raise HTTPException(404, "Report not found")
-    if report.stage not in (ReportStage.failed, ReportStage.cancelled):
+    # Resume is allowed for failed/cancelled reports, and also for done reports
+    # whose files have been wiped (Railway rebuild) -- in that case the user
+    # explicitly chose to re-run via the "Re-run from brief" UI.
+    pdf_missing = report.stage == ReportStage.done and not report.pdf_path
+    if report.stage not in (ReportStage.failed, ReportStage.cancelled) and not pdf_missing:
         raise HTTPException(400, f"Report is not failed/cancelled (stage={report.stage})")
 
     if from_stage is not None:

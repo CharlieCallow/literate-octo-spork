@@ -49,6 +49,32 @@ def init_db() -> None:
     seed_from_filesystem()
     hydrate_filesystem()
 
+    # Reports' PDFs still live on the ephemeral filesystem (R2 storage is the
+    # proper fix). Clear pdf_path on rows whose file is gone so the dashboard
+    # doesn't show broken iframe links.
+    _clear_stale_pdf_paths()
+
+
+def _clear_stale_pdf_paths() -> None:
+    """Set pdf_path = NULL on any report whose PDF file is no longer on disk."""
+    from pathlib import Path
+
+    from sqlmodel import select
+
+    from api.models import Report
+    with Session(engine) as session:
+        rows = session.exec(
+            select(Report).where(Report.pdf_path.is_not(None))  # type: ignore[union-attr]
+        ).all()
+        cleared = 0
+        for r in rows:
+            if r.pdf_path and not Path(r.pdf_path).exists():
+                r.pdf_path = None
+                session.add(r)
+                cleared += 1
+        if cleared:
+            session.commit()
+
 
 def _migrate_sqlite() -> None:
     """Add columns introduced after the first ship. SQLite-only; no-op elsewhere."""
