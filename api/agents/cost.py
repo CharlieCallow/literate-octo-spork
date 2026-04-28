@@ -3,6 +3,7 @@ Update against the public Anthropic price list when it changes."""
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 
 # USD per million tokens. (input, output)
@@ -11,6 +12,11 @@ _PRICING: dict[str, tuple[float, float]] = {
     "claude-sonnet-4-6": (3.00, 15.00),
     "claude-opus-4-7": (15.00, 75.00),
 }
+
+# Anthropic prompt-caching multipliers vs base input price.
+# Reads are billed at 10% of input; 5-minute cache writes at 125%.
+_CACHE_READ_MULT = 0.10
+_CACHE_WRITE_MULT = 1.25
 
 
 @dataclass(frozen=True)
@@ -24,7 +30,9 @@ class Usage:
 def cost_for(model: str, usage: Usage) -> float:
     in_price, out_price = _PRICING.get(model, (3.00, 15.00))
     return (
-        (usage.input_tokens + usage.cache_read_tokens) * in_price
+        usage.input_tokens * in_price
+        + usage.cache_read_tokens * in_price * _CACHE_READ_MULT
+        + usage.cache_creation_tokens * in_price * _CACHE_WRITE_MULT
         + usage.output_tokens * out_price
     ) / 1_000_000
 
@@ -39,13 +47,20 @@ class CostTracker:
         self.day_cap = day_cap
         self.report_spent = 0.0
         self.day_spent = day_spent
+        # Concurrent stages (research, draft) run analysts in parallel threads
+        # that share this tracker; lock the read-modify-write to keep the cap
+        # check atomic.
+        self._lock = threading.Lock()
 
     def add(self, model: str, usage: Usage) -> float:
         spend = cost_for(model, usage)
-        self.report_spent += spend
-        self.day_spent += spend
-        if self.report_spent > self.report_cap:
-            raise BudgetExceeded(f"Per-report cap ${self.report_cap:.2f} exceeded (${self.report_spent:.2f})")
-        if self.day_spent > self.day_cap:
-            raise BudgetExceeded(f"Per-day cap ${self.day_cap:.2f} exceeded (${self.day_spent:.2f})")
+        with self._lock:
+            self.report_spent += spend
+            self.day_spent += spend
+            report_spent = self.report_spent
+            day_spent = self.day_spent
+        if report_spent > self.report_cap:
+            raise BudgetExceeded(f"Per-report cap ${self.report_cap:.2f} exceeded (${report_spent:.2f})")
+        if day_spent > self.day_cap:
+            raise BudgetExceeded(f"Per-day cap ${self.day_cap:.2f} exceeded (${day_spent:.2f})")
         return spend

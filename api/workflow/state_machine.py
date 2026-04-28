@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
@@ -276,6 +277,21 @@ def _resolved_contributors(report: Report, brief: str) -> list[dict[str, str]]:
     return valid or get_roster()
 
 
+def _run_concurrently(calls: list[Callable[[], AgentResult]]) -> list[AgentResult]:
+    """Run a batch of zero-arg callables in parallel threads, return their
+    AgentResults in submission order. Used by research + draft stages to
+    fan analysts out instead of running them serially."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    if not calls:
+        return []
+    if len(calls) == 1:
+        return [calls[0]()]
+    with ThreadPoolExecutor(max_workers=len(calls)) as ex:
+        futures = [ex.submit(c) for c in calls]
+        return [f.result() for f in futures]
+
+
 def run_stage(report: Report, stage: ReportStage) -> ReportStage:
     """Execute one stage. Returns the next stage to run (or `done`)."""
     if report.id is None:
@@ -362,15 +378,16 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
     if stage == ReportStage.research:
         brief = _read(wd / "brief.md")
         contributors = _resolved_contributors(report, brief)
-        # Sequential with a small pause so we don't bunch token usage into one
-        # minute and trip the per-minute rate limit. Adapter-level 429 retry
-        # still kicks in if we hit it anyway.
-        import time
-        for i, c in enumerate(contributors):
-            if i > 0:
-                time.sleep(8)
-            analyst = _make_analyst(c["slug"], cost, audit, models["analyst"])
-            result = analyst.research(brief, report.theme, wd, mode=report.mode)
+        analysts = [
+            _make_analyst(c["slug"], cost, audit, models["analyst"])
+            for c in contributors
+        ]
+        research_calls: list[Callable[[], AgentResult]] = [
+            (lambda a=a: a.research(brief, report.theme, wd, mode=report.mode))  # type: ignore[misc]
+            for a in analysts
+        ]
+        results = _run_concurrently(research_calls)
+        for c, result in zip(contributors, results, strict=True):
             _write(wd / f"notes-{c['slug']}.md", result.text)
             _record(report.id, wd, result)
         return _next_stage(stage)
@@ -387,10 +404,17 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
     if stage == ReportStage.draft:
         brief = _read(wd / "brief.md")
         contributors = _resolved_contributors(report, brief)
-        for c in contributors:
-            analyst = _make_analyst(c["slug"], cost, audit, models["analyst"])
-            notes = _read(wd / f"notes-{c['slug']}.md")
-            result = analyst.draft(brief, notes, report.theme)
+        analysts = [
+            _make_analyst(c["slug"], cost, audit, models["analyst"])
+            for c in contributors
+        ]
+        notes_per_contributor = [_read(wd / f"notes-{c['slug']}.md") for c in contributors]
+        draft_calls: list[Callable[[], AgentResult]] = [
+            (lambda a=a, n=n: a.draft(brief, n, report.theme))  # type: ignore[misc]
+            for a, n in zip(analysts, notes_per_contributor, strict=True)
+        ]
+        results = _run_concurrently(draft_calls)
+        for c, result in zip(contributors, results, strict=True):
             _write(wd / f"section-{c['slug']}.md", result.text)
             _record(report.id, wd, result)
         return _next_stage(stage)

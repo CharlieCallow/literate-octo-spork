@@ -161,9 +161,22 @@ class Agent:
                 return line[2:].strip()
         return self.slug
 
-    def _system_prompt(self, extra: str = "") -> str:
+    def _system_blocks(self, extra: str = "") -> list[dict[str, Any]]:
+        """System prompt as a list of cacheable text blocks.
+
+        The persona file is the stable, repeated portion across every iteration
+        of the tool-use loop and across every call this agent makes during a
+        report -- mark it with `cache_control` so Anthropic caches it. Anything
+        ad-hoc (the rare extra_system) goes into a second uncached block."""
         persona = self.persona_path.read_text(encoding="utf-8")
-        return persona + ("\n\n---\n\n" + extra if extra else "")
+        blocks: list[dict[str, Any]] = [{
+            "type": "text",
+            "text": persona,
+            "cache_control": {"type": "ephemeral"},
+        }]
+        if extra:
+            blocks.append({"type": "text", "text": extra})
+        return blocks
 
     def run(
         self,
@@ -192,7 +205,7 @@ class Agent:
             kwargs: dict[str, Any] = {
                 "model": self.model,
                 "max_tokens": max_tokens,
-                "system": self._system_prompt(extra_system),
+                "system": self._system_blocks(extra_system),
                 "messages": messages,
             }
             if anth_tools:
