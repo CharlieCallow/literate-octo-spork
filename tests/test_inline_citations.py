@@ -21,7 +21,7 @@ def test_replaces_link_with_anchored_superscript() -> None:
 
 
 def test_dedupes_repeated_url() -> None:
-    s = _section("First ([Source](https://a.com)), and again ([Source](https://a.com)).")
+    s = _section("First ([Source](https://a.com/x)), and again ([Source](https://a.com/x)).")
     out, sources = attach_inline_citations([s], None, check_urls=False)
     # Both citations should be [1]
     assert out[0].body_md.count('href="#cite-1"') == 2
@@ -29,8 +29,8 @@ def test_dedupes_repeated_url() -> None:
 
 
 def test_assigns_sequential_numbers_across_sections() -> None:
-    s1 = _section("Claim ([A](https://a.com)).")
-    s2 = _section("Other claim ([B](https://b.com)).")
+    s1 = _section("Claim ([A](https://a.com/x)).")
+    s2 = _section("Other claim ([B](https://b.com/y)).")
     out, sources = attach_inline_citations([s1, s2], None, check_urls=False)
     assert 'href="#cite-1"' in out[0].body_md
     assert 'href="#cite-2"' in out[1].body_md
@@ -38,18 +38,18 @@ def test_assigns_sequential_numbers_across_sections() -> None:
 
 
 def test_appends_uncited_extras_after_inline() -> None:
-    s = _section("Inline ([A](https://a.com)).")
+    s = _section("Inline ([A](https://a.com/x)).")
     extras = [
-        {"url": "https://a.com", "title": "Already inline", "source": "web"},
-        {"url": "https://b.com", "title": "Web search hit", "source": "web"},
+        {"url": "https://a.com/x", "title": "Already inline", "source": "web"},
+        {"url": "https://b.com/y", "title": "Web search hit", "source": "web"},
     ]
     out, sources = attach_inline_citations([s], extras, check_urls=False)
     _ = out  # silence unused-var lint
-    # a.com keeps n=1 (inline), b.com gets n=2 (uncited tail)
+    # a.com/x keeps n=1 (inline), b.com/y gets n=2 (uncited tail)
     assert sources[0]["n"] == "1"
-    assert sources[0]["url"] == "https://a.com"
+    assert sources[0]["url"] == "https://a.com/x"
     assert sources[1]["n"] == "2"
-    assert sources[1]["url"] == "https://b.com"
+    assert sources[1]["url"] == "https://b.com/y"
 
 
 def test_strips_trailing_punctuation_from_url() -> None:
@@ -86,3 +86,37 @@ def test_leaves_chart_tags_alone() -> None:
     # chart tags don't have an http URL inside the parens
     assert "[chart: rates.png]" in out[0].body_md
     assert sources == []
+
+
+def test_drops_generic_homepage_citations() -> None:
+    """Bare-homepage URLs (no path, e.g. https://www.federalreserve.gov/)
+    aren't real citations -- we strip them like dead links so the macro
+    section can't pad Sources with publisher home pages."""
+    s = _section(
+        "Real cite ([FRED](https://fred.stlouisfed.org/series/DGS10)), "
+        "lazy cite ([Fed](https://www.federalreserve.gov/)), "
+        "another lazy ([OPEC](https://www.opec.org))."
+    )
+    out, sources = attach_inline_citations([s], None, check_urls=False)
+    body = out[0].body_md
+    assert 'href="#cite-1"' in body  # real link cited
+    assert "Fed" in body              # anchor text survives
+    assert "OPEC" in body
+    assert "federalreserve.gov" not in body  # but no link
+    assert "opec.org" not in body
+    assert len(sources) == 1
+    assert sources[0]["url"] == "https://fred.stlouisfed.org/series/DGS10"
+
+
+def test_drops_generic_homepage_from_extras() -> None:
+    """Web-search hits that are bare homepages also get filtered from the
+    uncited Sources tail."""
+    s = _section("No inline cites here.")
+    extras = [
+        {"url": "https://www.opec.org/", "title": "OPEC", "source": "web"},
+        {"url": "https://www.opec.org/about_us/our-mission.htm", "title": "OPEC Mission", "source": "web"},
+    ]
+    _, sources = attach_inline_citations([s], extras, check_urls=False)
+    urls = [s["url"] for s in sources]
+    assert "https://www.opec.org/" not in urls
+    assert "https://www.opec.org/about_us/our-mission.htm" in urls
