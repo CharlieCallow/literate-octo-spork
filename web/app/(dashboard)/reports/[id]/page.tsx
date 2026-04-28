@@ -1,5 +1,5 @@
 "use client";
-import { memo, use, useCallback, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useState } from "react";
 import { AuditLog } from "@/components/AuditLog";
 import { AuthGate } from "@/components/Auth";
 import { EmailReportDialog } from "@/components/EmailReportDialog";
@@ -27,9 +27,6 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
   const [error, setError] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
-  // Default to reading mode -- nicer on mobile and a much faster first paint
-  // than the embedded PDF iframe. Toggle restores the original PDF view.
-  const [view, setView] = useState<"reading" | "pdf">("reading");
   const readingLoader = useCallback(() => api.getReading(reportId), [reportId]);
 
   useEffect(() => {
@@ -170,42 +167,23 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
           {report.pdf_url ? (
             <div className="card">
               <div className="byline" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span>{view === "reading" ? "Reading mode" : "PDF"}</span>
-                <span style={{ display: "inline-flex", gap: 6 }}>
-                  <button
-                    onClick={() => setView("reading")}
-                    style={{
-                      padding: "2px 10px", fontSize: 11,
-                      background: view === "reading" ? "var(--forte-navy)" : "#FFF",
-                      color: view === "reading" ? "#FFF" : "var(--forte-ink)",
-                      border: "1px solid var(--forte-rule)",
-                    }}
-                  >
-                    Reading
-                  </button>
-                  <button
-                    onClick={() => setView("pdf")}
-                    style={{
-                      padding: "2px 10px", fontSize: 11,
-                      background: view === "pdf" ? "var(--forte-navy)" : "#FFF",
-                      color: view === "pdf" ? "#FFF" : "var(--forte-ink)",
-                      border: "1px solid var(--forte-rule)",
-                    }}
-                  >
-                    PDF
-                  </button>
-                </span>
+                <span>Reading mode</span>
+                <a
+                  href={api.pdfUrl(report.id)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    padding: "3px 12px", fontSize: 12, borderRadius: 4,
+                    background: "var(--forte-navy)", color: "#FFF",
+                    textDecoration: "none", fontWeight: 600,
+                  }}
+                >
+                  Download PDF
+                </a>
               </div>
-              {view === "reading" ? (
-                <div style={{ marginTop: 12 }}>
-                  <ReadingView loader={readingLoader} />
-                </div>
-              ) : (
-                <PdfFrame reportId={report.id} />
-              )}
-              <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
-                <a href={api.pdfUrl(report.id)}>Download PDF</a>
-              </p>
+              <div style={{ marginTop: 12 }}>
+                <ReadingView loader={readingLoader} />
+              </div>
             </div>
           ) : report.stage === "done" ? (
             <div className="card">
@@ -237,12 +215,3 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
     </AuthGate>
   );
 }
-
-const PdfFrame = memo(function PdfFrame({ reportId }: { reportId: number }) {
-  return (
-    <iframe
-      src={api.pdfUrl(reportId)}
-      style={{ width: "100%", height: "85vh", border: 0 }}
-    />
-  );
-});

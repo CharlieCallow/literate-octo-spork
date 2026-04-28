@@ -52,8 +52,9 @@ def _key(report_id: int, *parts: str) -> str:
 
 
 def upload_artifacts(report_id: int, wd: Path) -> int:
-    """Upload report.pdf + everything in charts/ for the given report.
-    Returns the number of files uploaded. No-op if R2 isn't configured."""
+    """Upload report.pdf + everything in charts/ + the source markdown files
+    needed to rebuild reading mode for the given report. Returns the number
+    of files uploaded. No-op if R2 isn't configured."""
     if not is_r2_enabled():
         return 0
     client = _client()
@@ -66,6 +67,18 @@ def upload_artifacts(report_id: int, wd: Path) -> int:
             ExtraArgs={"ContentType": "application/pdf"},
         )
         uploaded += 1
+
+    # Markdown sources reading mode rebuilds from. Without these, the working
+    # dir on a fresh container has only the PDF and the reading endpoint 404s.
+    for name in ("brief.md", "edited.md", "data-section.md", "sources.json"):
+        f = wd / name
+        if f.exists():
+            ct = "application/json" if name.endswith(".json") else "text/markdown"
+            client.upload_file(
+                str(f), settings.r2_bucket, _key(report_id, name),
+                ExtraArgs={"ContentType": ct},
+            )
+            uploaded += 1
 
     charts = wd / "charts"
     if charts.exists():

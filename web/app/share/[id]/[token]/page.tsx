@@ -1,5 +1,6 @@
 "use client";
-import { use, useEffect, useRef, useState } from "react";
+import { use, useCallback, useEffect, useRef, useState } from "react";
+import { ReadingView } from "@/components/ReadingView";
 import { api, type ChartSpec, type PublicReport } from "@/lib/api";
 
 declare global {
@@ -31,6 +32,7 @@ export default function SharePage({ params }: { params: Promise<{ id: string; to
   const [report, setReport] = useState<PublicReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [charts, setCharts] = useState<{ filename: string; has_json: boolean }[]>([]);
+  const readingLoader = useCallback(() => api.getPublicReading(reportId, token), [reportId, token]);
 
   useEffect(() => {
     if (!Number.isFinite(reportId)) { setError("Invalid link"); return; }
@@ -64,34 +66,28 @@ export default function SharePage({ params }: { params: Promise<{ id: string; to
         </p>
       )}
 
-      <div className="card" style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-        <a
-          href={`/share/${reportId}/${token}/read`}
-          style={{
-            display: "inline-block", padding: "8px 16px",
-            background: "var(--forte-navy)", color: "#FFF", borderRadius: 4,
-            textDecoration: "none", fontSize: 14, fontWeight: 600,
-          }}
-        >
-          Reading mode
-        </a>
-        <span className="muted" style={{ fontSize: 13 }}>web-styled view, easier on mobile</span>
-      </div>
-
-      {report.has_pdf ? (
-        <div className="card">
-          <div className="byline">PDF</div>
-          <iframe
-            src={api.publicPdfUrl(reportId, token)}
-            style={{ width: "100%", height: "85vh", border: 0 }}
-          />
-          <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
-            <a href={api.publicPdfUrl(reportId, token)}>Download PDF</a>
-          </p>
+      <div className="card">
+        <div className="byline" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>Reading mode</span>
+          {report.has_pdf && (
+            <a
+              href={api.publicPdfUrl(reportId, token)}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                padding: "3px 12px", fontSize: 12, borderRadius: 4,
+                background: "var(--forte-navy)", color: "#FFF",
+                textDecoration: "none", fontWeight: 600,
+              }}
+            >
+              Download PDF
+            </a>
+          )}
         </div>
-      ) : (
-        <div className="card"><p className="muted">PDF is not available for this report.</p></div>
-      )}
+        <div style={{ marginTop: 12 }}>
+          <ReadingView loader={readingLoader} />
+        </div>
+      </div>
 
       {interactive.length > 0 && (
         <div className="card">
