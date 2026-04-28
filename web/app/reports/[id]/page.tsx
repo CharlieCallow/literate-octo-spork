@@ -1,6 +1,8 @@
 "use client";
 import { memo, use, useEffect, useState } from "react";
+import { AuditLog } from "@/components/AuditLog";
 import { AuthGate } from "@/components/Auth";
+import { InteractiveCharts } from "@/components/InteractiveCharts";
 import { RunStatus } from "@/components/RunStatus";
 import { StageBreakdown } from "@/components/StageBreakdown";
 import { api, type Job, type Report, type ReportStage } from "@/lib/api";
@@ -129,6 +131,10 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
 
             {jobs.length > 0 && <StageBreakdown jobs={jobs} />}
           </div>
+
+          <InteractiveCharts reportId={report.id} />
+
+          <AuditLog reportId={report.id} />
 
           {report.pdf_url ? (
             <div className="card">

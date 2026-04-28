@@ -135,6 +135,30 @@ export interface Theme {
   commissioned_report_id: number | null;
 }
 
+export interface AuditEntry {
+  id: number;
+  actor: string;
+  event: string;
+  cost_usd: number;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ChartSpec {
+  kind: "line" | "bar" | "regime" | "comparison" | "event";
+  title: string;
+  subtitle: string;
+  source: string;
+  as_of: string;
+  index: string[];
+  series: Record<string, (number | null)[]>;
+  shaded?: [string, string][];
+  events?: { date: string; label: string }[];
+  dual_axis?: boolean;
+  horizontal?: boolean;
+  palette: { cycle: string[]; navy: string; teal: string; rule: string; muted: string };
+}
+
 export interface ScoutRun {
   id: number;
   started_at: string;
@@ -178,7 +202,28 @@ export const api = {
   getSettings: () => req<AppSettings>("/settings"),
   updateSettings: (payload: Partial<AppSettings>) =>
     req<AppSettings>("/settings", { method: "PUT", body: JSON.stringify(payload) }),
+
+  // Per-stage average duration in seconds, computed from past completed jobs.
+  stageDurations: () => req<{ stage: ReportStage; seconds: number }[]>("/reports/eta/stage_durations"),
+
+  // Interactive charts
+  listChartFiles: (reportId: number) =>
+    req<{ filename: string; has_json: boolean }[]>(`/reports/${reportId}/charts`),
+  getChartJson: (reportId: number, filename: string) =>
+    req<ChartSpec>(`/reports/${reportId}/chart.json?filename=${encodeURIComponent(filename)}`),
+
+  // Audit log
+  getAuditLog: (reportId: number, filter?: { event?: string; actor?: string }) => {
+    const params = new URLSearchParams();
+    if (filter?.event) params.set("event", filter.event);
+    if (filter?.actor) params.set("actor", filter.actor);
+    const qs = params.toString() ? `?${params}` : "";
+    return req<AuditEntry[]>(`/reports/${reportId}/audit${qs}`);
+  },
+
   pdfUrl: (id: number) => `${API_BASE}/reports/${id}/pdf`,
+  chartJsonUrl: (reportId: number, filename: string) =>
+    `${API_BASE}/reports/${reportId}/chart.json?filename=${encodeURIComponent(filename)}`,
 
   // Scout
   latestThemes: () => req<Theme[]>("/scout/themes"),

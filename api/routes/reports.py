@@ -12,7 +12,7 @@ from sqlmodel import Session, select
 
 from api.auth import require_auth
 from api.db import get_session
-from api.models import Job, Report, ReportMode, ReportStage
+from api.models import AuditLog, Job, Report, ReportMode, ReportStage
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -95,6 +95,43 @@ def get_report(report_id: int, session: Session = Depends(get_session)) -> Repor
     if not report:
         raise HTTPException(404, "Report not found")
     return ReportOut.from_db(report)
+
+
+@router.get("/{report_id}/charts", dependencies=[Depends(require_auth)])
+def list_chart_files(report_id: int) -> list[dict[str, object]]:
+    """List chart filenames generated for a report (PNG + JSON sidecars)."""
+    from api.workflow.state_machine import working_dir
+    wd = working_dir(report_id)
+    charts_dir = wd / "charts"
+    if not charts_dir.exists():
+        return []
+    return [
+        {"filename": p.name, "has_json": p.with_suffix(".json").exists()}
+        for p in sorted(charts_dir.glob("*.png"))
+    ]
+
+
+@router.get("/{report_id}/chart.json", dependencies=[Depends(require_auth)])
+def get_chart_json(
+    report_id: int,
+    filename: str,
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    """Return the JSON sidecar for a chart so the dashboard can render it
+    interactively. `filename` is the PNG name (e.g. 'rates.png')."""
+    import json as _json
+
+    report = session.get(Report, report_id)
+    if not report:
+        raise HTTPException(404, "Report not found")
+    # Resolve the chart's sidecar relative to the report working dir.
+    from api.workflow.state_machine import working_dir
+    wd = working_dir(report_id)
+    base = filename.rsplit(".", 1)[0]
+    json_path = wd / "charts" / f"{base}.json"
+    if not json_path.exists():
+        raise HTTPException(404, "Chart sidecar not found")
+    return _json.loads(json_path.read_text(encoding="utf-8"))
 
 
 @router.get("/{report_id}/pdf", dependencies=[Depends(require_auth)])
@@ -223,6 +260,43 @@ def resume(
     session.commit()
     session.refresh(report)
     return ReportOut.from_db(report)
+
+
+class AuditEntry(BaseModel):
+    id: int
+    actor: str
+    event: str
+    cost_usd: float
+    details: dict[str, object]
+    created_at: datetime
+
+
+@router.get("/{report_id}/audit", response_model=list[AuditEntry], dependencies=[Depends(require_auth)])
+def list_audit(
+    report_id: int,
+    event: str | None = None,
+    actor: str | None = None,
+    session: Session = Depends(get_session),
+) -> list[AuditEntry]:
+    """Per-report audit log: every model call, every tool invocation,
+    each with its own cost increment."""
+    q = select(AuditLog).where(AuditLog.report_id == report_id)
+    if event:
+        q = q.where(AuditLog.event == event)
+    if actor:
+        q = q.where(AuditLog.actor == actor)
+    rows = session.exec(q.order_by(AuditLog.created_at)).all()  # type: ignore[arg-type]
+    return [
+        AuditEntry(
+            id=r.id or 0,
+            actor=r.actor,
+            event=r.event,
+            cost_usd=r.cost_usd,
+            details=dict(r.details or {}),
+            created_at=r.created_at if r.created_at.tzinfo else r.created_at.replace(tzinfo=UTC),
+        )
+        for r in rows
+    ]
 
 
 @router.post("/{report_id}/cancel", response_model=ReportOut, dependencies=[Depends(require_auth)])
