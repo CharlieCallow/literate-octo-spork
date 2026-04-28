@@ -94,6 +94,7 @@ Output the full updated house view in markdown, nothing else.
         available_contributors: list[dict[str, str]] | None = None,
         past_reports: list[dict[str, str]] | None = None,
         house_view: str | None = None,
+        primer: str | None = None,
     ) -> AgentResult:
         roster = available_contributors or []
         roster_blob = "\n".join(f"- `{c['slug']}` — {c['name']} ({c['role']})" for c in roster) or "(none)"
@@ -115,6 +116,17 @@ Output the full updated house view in markdown, nothing else.
             "view is to make Forte's narrative coherent across reports.\n"
             if house_view and house_view.strip() else ""
         )
+        primer_blob = (
+            "\nPRE-BRIEF DATA PRIMER (Scout's 30-second tape scan -- numbers and "
+            "headlines from this morning, not the model's training priors). Anchor "
+            "the brief to these prints, not generalities:\n\n"
+            f"{primer}\n\n"
+            "When the primer says something specific (a level, a YTD move, a recent "
+            "headline), the brief should make the team chase it. Echo at least one "
+            "concrete print from the primer in the ANGLE so the report's framing "
+            "starts from where the tape actually is.\n"
+            if primer and primer.strip() else ""
+        )
         prompt = f"""A new theme has been commissioned for a Forte Research report. Write a structured brief.
 
 THEME: {theme}
@@ -122,7 +134,7 @@ SUBTITLE: {subtitle or "(propose one)"}
 
 PRIOR PUBLISHED REPORTS (most recent first):
 {past_blob}
-{house_view_blob}
+{house_view_blob}{primer_blob}
 Do NOT reference past reports that aren't on the list above. If the list is empty, this really is the first report -- don't pretend the firm has prior history. Anchor only to claims you can verify with tool calls or that appear in the past list.
 
 AVAILABLE CONTRIBUTORS:

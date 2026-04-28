@@ -50,8 +50,8 @@ Workflow -- IN THIS ORDER:
 2. Use `fred_series` or `yfinance_history` to scout series before charting them, ONLY if you need to verify a series exists.
 3. Call `make_chart` 2-3 times -- ONCE PER CHART. Each call must succeed before you reference the file.
    - chart_kind: 'line' (default), 'bar', 'regime' (auto-shades NBER recessions on line series; great for cycle context), 'comparison' (dual-axis -- pass compare_with), or 'event' (vertical lines at named dates -- pass events=[{{date, label}}, ...]).
-   - source: 'fred' or 'yfinance'
-   - series_or_ticker: real FRED id (e.g. 'DGS10') or yfinance ticker (e.g. 'SPY', '^VIX')
+   - source: 'fred' (US macro), 'yfinance' (prices), 'worldbank' (cross-country macro, annual), or 'eia' (US energy)
+   - series_or_ticker: FRED id (e.g. 'DGS10'), yfinance ticker (e.g. 'SPY', '^VIX'), worldbank 'COUNTRY:INDICATOR' (e.g. 'GBR:NY.GDP.MKTP.KD.ZG'), or EIA route (e.g. 'petroleum/pri/spt/data')
    - title: 8-15 words, descriptive
    - subtitle: one short sentence, the angle
    - filename: short and unique like 'rates.png', 'spy.png'
