@@ -49,12 +49,15 @@ Workflow -- IN THIS ORDER:
 1. Read the brief's CHARTS section. Pick 2-3 charts (no more, no less).
 2. Use `fred_series` or `yfinance_history` to scout series before charting them, ONLY if you need to verify a series exists.
 3. Call `make_chart` 2-3 times -- ONCE PER CHART. Each call must succeed before you reference the file.
-   - chart_kind: 'line' or 'bar'
+   - chart_kind: 'line' (default), 'bar', 'regime' (auto-shades NBER recessions on line series; great for cycle context), 'comparison' (dual-axis -- pass compare_with), or 'event' (vertical lines at named dates -- pass events=[{{date, label}}, ...]).
    - source: 'fred' or 'yfinance'
    - series_or_ticker: real FRED id (e.g. 'DGS10') or yfinance ticker (e.g. 'SPY', '^VIX')
    - title: 8-15 words, descriptive
    - subtitle: one short sentence, the angle
    - filename: short and unique like 'rates.png', 'spy.png'
+   - For 'regime': pass shaded='nber' to overlay recession bands.
+   - For 'comparison': pass compare_with to overlay a second series on a dual y-axis.
+   - For 'event': pass events as a list of {{date, label}} objects (e.g. Fed meeting dates).
 4. AFTER all make_chart calls succeed, write the markdown section. This is mandatory -- the agent ALWAYS finishes with the section, never with just a status line.
    - The VERY FIRST CHARACTERS of your final response must be `## Data & charts` -- no preamble, no "Both charts rendered, now the section", no acknowledgements. Anything before that heading lands directly in the PDF as visible text.
    - For EACH chart you generated, write a short paragraph (60-120 words) of commentary.

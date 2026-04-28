@@ -134,6 +134,19 @@ def edgar_filings_tool() -> Tool:
 # ---------- chart generator (FRED + yfinance) ----------
 
 def make_chart_tool(out_dir: Path) -> Tool:
+    def _frame(source: str, series_or_ticker: str, *, period: str,
+               start: str | None, end: str | None) -> tuple[pd.DataFrame, str]:
+        if source == "fred":
+            s = fred.get_series(series_or_ticker, start=start, end=end)
+            return pd.DataFrame({series_or_ticker: s}), "FRED"
+        if source == "yfinance":
+            df_full = yf_data.get_history(series_or_ticker, period=period)
+            if df_full.empty:
+                return pd.DataFrame(), "yfinance"
+            close = df_full["Close"].dropna()
+            return pd.DataFrame({series_or_ticker: close}), "yfinance"
+        raise ValueError(f"Unknown source: {source}. Use 'fred' or 'yfinance'.")
+
     def fn(
         chart_kind: str,
         source: str,
@@ -144,38 +157,57 @@ def make_chart_tool(out_dir: Path) -> Tool:
         period: str = "1y",
         start: str | None = None,
         end: str | None = None,
+        compare_with: str | None = None,
+        events: list[dict[str, str]] | None = None,
+        shaded: str | None = None,
     ) -> str:
-        if source == "fred":
-            s = fred.get_series(series_or_ticker, start=start, end=end)
-            df = pd.DataFrame({series_or_ticker: s})
-            src_label = "FRED"
-        elif source == "yfinance":
-            df_full = yf_data.get_history(series_or_ticker, period=period)
-            if df_full.empty:
-                return f"yfinance returned no data for {series_or_ticker}"
-            close = df_full["Close"].dropna()
-            df = pd.DataFrame({series_or_ticker: close})
-            src_label = "yfinance"
-        else:
-            return f"Unknown source: {source}. Use 'fred' or 'yfinance'."
+        try:
+            df, src_label = _frame(source, series_or_ticker, period=period, start=start, end=end)
+        except ValueError as e:
+            return str(e)
+        if df.empty:
+            return f"{source} returned no data for {series_or_ticker}"
+
+        # Optional second series for comparison/regime/event.
+        if compare_with:
+            df2, _ = _frame(source, compare_with, period=period, start=start, end=end)
+            if not df2.empty:
+                df = df.join(df2, how="outer")
 
         as_of = df.index[-1].date().isoformat() if len(df) else _date.today().isoformat()
         out_path = out_dir / filename
-        if chart_kind == "line":
-            chart_helpers.line_chart(df, title=title, subtitle=subtitle, source=src_label, as_of=as_of, out_path=out_path)
-        elif chart_kind == "bar":
-            chart_helpers.bar_chart(df[series_or_ticker], title=title, subtitle=subtitle, source=src_label, as_of=as_of, out_path=out_path)
-        else:
-            return f"Unknown chart_kind: {chart_kind}"
-        return json.dumps({"path": str(out_path), "filename": filename, "as_of": as_of})
+
+        try:
+            if chart_kind == "line":
+                chart_helpers.line_chart(df, title=title, subtitle=subtitle, source=src_label, as_of=as_of, out_path=out_path)
+            elif chart_kind == "bar":
+                first_col = df.columns[0]
+                chart_helpers.bar_chart(df[first_col], title=title, subtitle=subtitle, source=src_label, as_of=as_of, out_path=out_path)
+            elif chart_kind == "regime":
+                chart_helpers.regime_chart(df, title=title, subtitle=subtitle, source=src_label, as_of=as_of, out_path=out_path, shaded=shaded or "nber")
+            elif chart_kind == "comparison":
+                chart_helpers.comparison_chart(df, title=title, subtitle=subtitle, source=src_label, as_of=as_of, out_path=out_path)
+            elif chart_kind == "event":
+                chart_helpers.event_chart(df, events or [], title=title, subtitle=subtitle, source=src_label, as_of=as_of, out_path=out_path)
+            else:
+                return f"Unknown chart_kind: {chart_kind}. Use line | bar | regime | comparison | event."
+        except Exception as e:  # noqa: BLE001
+            return f"chart render failed: {e}"
+
+        return json.dumps({"path": str(out_path), "filename": filename, "as_of": as_of, "kind": chart_kind})
 
     return Tool(
         name="make_chart",
-        description="Generate a chart in the Forte house style. Backed by FRED (macro) or yfinance (prices). Saves a PNG.",
+        description=(
+            "Generate a chart in the Forte house style. Backed by FRED (macro) or yfinance (prices). "
+            "Kinds: 'line' (default), 'bar', 'regime' (line + shaded recessions; pass shaded='nber' or skip), "
+            "'comparison' (dual-axis when compare_with is set), 'event' (line + vertical event markers). "
+            "Saves a PNG plus a sibling .json sidecar that the dashboard can render interactively."
+        ),
         input_schema={
             "type": "object",
             "properties": {
-                "chart_kind": {"type": "string", "enum": ["line", "bar"]},
+                "chart_kind": {"type": "string", "enum": ["line", "bar", "regime", "comparison", "event"]},
                 "source": {"type": "string", "enum": ["fred", "yfinance"]},
                 "series_or_ticker": {"type": "string", "description": "FRED series id (e.g. 'DGS10') or yfinance ticker (e.g. 'SPY')."},
                 "title": {"type": "string"},
@@ -184,6 +216,13 @@ def make_chart_tool(out_dir: Path) -> Tool:
                 "period": {"type": "string", "description": "yfinance lookback (default '1y'). Ignored for FRED.", "default": "1y"},
                 "start": {"type": "string", "description": "FRED start date. Ignored for yfinance."},
                 "end": {"type": "string", "description": "FRED end date. Ignored for yfinance."},
+                "compare_with": {"type": "string", "description": "Optional second series/ticker for 'comparison' or to overlay on regime/event."},
+                "events": {
+                    "type": "array",
+                    "description": "For chart_kind='event': vertical-line markers, each {date: 'YYYY-MM-DD', label: 'short label'}.",
+                    "items": {"type": "object", "properties": {"date": {"type": "string"}, "label": {"type": "string"}}, "required": ["date", "label"]},
+                },
+                "shaded": {"type": "string", "description": "For chart_kind='regime': 'nber' for the bundled NBER recession bands."},
             },
             "required": ["chart_kind", "source", "series_or_ticker", "title", "subtitle", "filename"],
         },
