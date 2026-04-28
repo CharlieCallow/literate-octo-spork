@@ -677,13 +677,30 @@ def _build_reading_payload(report: Report, *, public_token: str | None = None) -
     )
 
     wd = working_dir(report.id)
+
+    # Working dir on Railway is ephemeral; markdown sources may be gone after a
+    # rebuild even though the report is `done`. Pull them back from R2 when
+    # they're missing locally so reading mode keeps working across rebuilds.
+    for name in ("edited.md", "brief.md", "data-section.md", "sources.json"):
+        if not (wd / name).exists() and storage.object_exists(report.id, name):
+            storage.fetch_to_local(report.id, wd, name)
+
     edited_path = wd / "edited.md"
     brief_path = wd / "brief.md"
     if not edited_path.exists():
-        raise HTTPException(404, "Report content not on disk (working dir was wiped)")
+        raise HTTPException(404, "Report content not on disk (working dir was wiped and not on R2)")
 
     edited = edited_path.read_text(encoding="utf-8")
     brief = brief_path.read_text(encoding="utf-8") if brief_path.exists() else ""
+
+    # Backfill: if the markdown is local but not yet on R2, push it now so the
+    # next rebuild can find it. Best-effort and silent.
+    try:
+        if storage.is_r2_enabled() and not storage.object_exists(report.id, "edited.md"):
+            storage.upload_artifacts(report.id, wd)
+    except Exception:  # noqa: BLE001
+        pass
+
     parsed = parse_edited(edited)
 
     raw_sections = _sections_for_render(parsed, wd)

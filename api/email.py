@@ -101,8 +101,7 @@ def send_digest(themes: list[Theme]) -> bool:
 
 def _format_report_html(report: Report, share_token: str, cover_note: str) -> str:
     base = _public_base_url()
-    reading_url = f"{base}/share/{report.id}/{share_token}/read"
-    pdf_url = f"{base}/share/{report.id}/{share_token}"
+    share_url = f"{base}/share/{report.id}/{share_token}"
     note_block = ""
     if cover_note.strip():
         note_block = (
@@ -121,10 +120,9 @@ def _format_report_html(report: Report, share_token: str, cover_note: str) -> st
   <h1 style="font-size:22px;color:#1F1B4D;margin:6px 0 4px;">{html.escape(report.theme)}</h1>
   {subtitle_block}
   {note_block}
-  <p style="font-size:14px;color:#1A1A1A;margin:0 0 18px;">A new research report is ready. Read on the web (recommended on mobile) or open the PDF.</p>
+  <p style="font-size:14px;color:#1A1A1A;margin:0 0 18px;">A new research report is ready. Open it in the web reader; the PDF is one click away from there (and attached, if it fit).</p>
   <p style="margin:0 0 12px;">
-    <a href="{html.escape(reading_url)}" style="display:inline-block;background:#1F1B4D;color:#FFFFFF;padding:10px 18px;border-radius:4px;text-decoration:none;font-weight:600;">Read on the web</a>
-    <a href="{html.escape(pdf_url)}" style="display:inline-block;background:#FFFFFF;color:#1F1B4D;border:1px solid #1F1B4D;padding:10px 18px;border-radius:4px;text-decoration:none;font-weight:600;margin-left:8px;">Open the PDF</a>
+    <a href="{html.escape(share_url)}" style="display:inline-block;background:#1F1B4D;color:#FFFFFF;padding:10px 18px;border-radius:4px;text-decoration:none;font-weight:600;">Open the report</a>
   </p>
   <p style="color:#6B6B7A;font-size:12px;margin:18px 0 0;">Sent via Forte Research. Anyone with this link can read the report -- treat it like a tokenised URL.</p>
 </div>
