@@ -6,6 +6,7 @@ import json
 from datetime import date as _date
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import pandas as pd
 
@@ -38,6 +39,8 @@ def fred_series_tool() -> Tool:
             s = s.iloc[-max_points:]
         return json.dumps({
             "series_id": series_id,
+            "url": f"https://fred.stlouisfed.org/series/{quote(series_id, safe='')}",
+            "title": f"FRED: {series_id}",
             "n": int(len(s)),
             "start": s.index[0].date().isoformat() if len(s) else None,
             "end": s.index[-1].date().isoformat() if len(s) else None,
@@ -68,11 +71,14 @@ def fred_series_tool() -> Tool:
 def yfinance_history_tool() -> Tool:
     def fn(ticker: str, period: str = "1y", interval: str = "1d") -> str:
         df = yf_data.get_history(ticker, period=period, interval=interval)
+        quote_url = f"https://finance.yahoo.com/quote/{quote(ticker, safe='^=-')}"
         if df.empty:
-            return json.dumps({"ticker": ticker, "n": 0, "error": "no data returned"})
+            return json.dumps({"ticker": ticker, "url": quote_url, "n": 0, "error": "no data returned"})
         close = df["Close"].dropna()
         return json.dumps({
             "ticker": ticker,
+            "url": quote_url,
+            "title": f"Yahoo Finance: {ticker}",
             "n": int(len(close)),
             "start": close.index[0].date().isoformat(),
             "end": close.index[-1].date().isoformat(),
@@ -404,7 +410,16 @@ def eia_series_tool() -> Tool:
             rows = eia.get_series(route, frequency=frequency, limit=limit)
         except RuntimeError as e:
             return json.dumps({"error": str(e)})
-        return json.dumps({"route": route, "frequency": frequency, "n": len(rows), "rows": rows})
+        # EIA's data browser strips the trailing /data segment from API routes.
+        browser_route = route.strip("/").removesuffix("/data")
+        return json.dumps({
+            "route": route,
+            "url": f"https://www.eia.gov/opendata/browser/{browser_route}",
+            "title": f"EIA: {browser_route}",
+            "frequency": frequency,
+            "n": len(rows),
+            "rows": rows,
+        })
 
     return Tool(
         name="eia_series",
@@ -548,6 +563,11 @@ def worldbank_tool() -> Tool:
         rows = worldbank.get_series(country, indicator, since=since)
         return json.dumps({
             "country": country, "indicator": indicator, "since": since,
+            "url": (
+                f"https://data.worldbank.org/indicator/{quote(indicator, safe='')}"
+                f"?locations={quote(country.upper(), safe='')}"
+            ),
+            "title": f"World Bank: {indicator} ({country.upper()})",
             "n": len(rows), "rows": rows,
         })
 

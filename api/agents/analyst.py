@@ -97,7 +97,16 @@ Research / sentiment:
 - `wikipedia_summary` — definitional and background context
 - `web_search` — current news, broker notes (Anthropic-managed)
 
-Use whichever tools fit your beat. Stay in your voice. Write structured notes in markdown -- claims with evidence and sources. Cite inline: when a claim rests on a specific source, link it like `[short anchor text](https://exact-url)` so the renderer can turn it into a numbered footnote. Use real URLs from your tool results, never invent them. Be opinionated; hedging without conviction is the failure mode. Output ~300-500 words.
+Use whichever tools fit your beat. Stay in your voice. Write structured notes in markdown -- claims with evidence and sources. Cite inline: when a claim rests on a specific source, link it like `[short anchor text](https://exact-url)` so the renderer can turn it into a numbered footnote.
+
+Citation rules (enforced):
+- Use the `url` field returned by the tool you got the data from. fred_series, yfinance_history, worldbank_series, eia_series, edgar_filings, wikipedia_summary, clinical_trials, github_*, arxiv_search and gdelt_news all return canonical deep links — cite those, not the agency's homepage.
+- For a FRED claim, link the FRED series page (`https://fred.stlouisfed.org/series/<id>`); for a price claim, link the Yahoo quote page; for a filing, link the EDGAR document URL. Same pattern for all tools.
+- Never cite a bare homepage like `https://www.federalreserve.gov`, `https://www.opec.org`, `https://finance.yahoo.com`. Generic landing pages are stripped from the Sources list at render time, so they're a wasted citation.
+- For web_search hits, prefer the article / report URL the search returned over the publisher's home page.
+- Use real URLs from your tool results, never invent them.
+
+Be opinionated; hedging without conviction is the failure mode. Output ~300-500 words.
 """
         tools: list[Tool] = [
             fred_series_tool(),

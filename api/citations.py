@@ -16,11 +16,26 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from dataclasses import replace
+from urllib.parse import urlsplit
 
 from api.render.pdf import Section
 from api.url_check import check_reachable
 
 LINK_RE = re.compile(r"\[(?P<text>[^\]]+?)\]\((?P<url>https?://[^)\s]+)\)")
+
+# Bare-homepage paths the analyst sometimes lands on when citing macro
+# claims via web search. The publisher's homepage isn't a real citation, so
+# we treat these like dead links: keep the visible anchor text, drop the
+# superscript and the entry from Sources.
+_HOMEPAGE_PATHS = {"", "/", "/index.html", "/index.htm", "/home", "/en", "/en/"}
+
+
+def _is_generic_homepage(url: str) -> bool:
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return False
+    return parts.path.rstrip().lower() in _HOMEPAGE_PATHS and not parts.query
 
 
 def _collect_urls(
@@ -82,18 +97,25 @@ def attach_inline_citations(
                 # Dead link -- keep the visible anchor text, drop the citation
                 # marker so the reader isn't pointed at a 404.
                 return text
+            if _is_generic_homepage(url):
+                # Bare homepage -- not a real citation. Same treatment as a
+                # dead link: keep anchor text, drop the superscript.
+                return text
             num = get_or_assign(url, text, "inline")
             return f'{text}<sup class="cite"><a href="#cite-{num}">[{num}]</a></sup>'
 
         new_sections.append(replace(s, body_md=LINK_RE.sub(repl, s.body_md)))
 
     # Append uncited URLs from sources.json (web search hits etc.) so they're
-    # still visible in the Sources section -- but only if they're reachable.
+    # still visible in the Sources section -- but only if they're reachable
+    # and not a bare publisher homepage.
     for src in extra_sources or []:
         url = src.get("url")
         if not url or url in inline_urls:
             continue
         if check_urls and url not in reachable:
+            continue
+        if _is_generic_homepage(url):
             continue
         get_or_assign(url, src.get("title"), src.get("source") or "web")
 
