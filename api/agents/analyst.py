@@ -153,5 +153,7 @@ YOUR NOTES:
 {notes}
 
 Output a single section in markdown. Start with a brief inline header (## <Section heading>). 200-400 words. Reference charts inline as `[chart: <filename>]` if you want one rendered (Data & Charts will produce them). Cite real sources inline using markdown links `[anchor text](https://url)` -- the renderer turns these into numbered footnotes. Do not invent data or URLs -- only use figures and links from your notes.
+
+Conviction tags. After every substantive opinion or directional claim (not boring facts), append a conviction tag in curly braces: `{{c1}}` (throwaway, weak signal), `{{c2}}` (low — could be wrong), `{{c3}}` (base case — fine), `{{c4}}` (high — happy to defend), `{{c5}}` (table-pounding). The Editor uses these to decide what to cut, then strips them before render. If you can't honestly tag a claim `{{c3}}+`, you probably shouldn't be making it.
 """
         return self.run(prompt, max_tokens=2048)

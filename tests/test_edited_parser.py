@@ -58,3 +58,72 @@ def test_sections_in_order() -> None:
 def test_closing_extracted() -> None:
     parsed = parse_edited(SAMPLE)
     assert "political consensus" in str(parsed["closing"])
+
+
+# Same shape but with the new editorial blocks the EIC now emits.
+SAMPLE_WITH_BEAR_AND_DISAGREEMENT = """# OPENING
+Markets keep telling you nuclear is back. Markets are right.
+
+# HOUSE VIEW (TOP)
+Long the bottleneck, not the pounds.
+
+# REVISED SECTIONS
+## Macro view
+**author:** Henrik Voss
+**role:** Macro Strategist
+
+The Western fuel cycle is short of conversion and enrichment.
+
+## Equity exposure
+**author:** Priya Anand
+**role:** Equity / Sector Analyst
+
+Cameco at 2.4x book is not where the value lives anymore.
+
+# DISAGREEMENT
+Henrik likes the conversion bottleneck; Priya thinks the equity is a financing trap.
+
+# BEAR CASE
+Where we'd be wrong: a Kazakh swing back online clears the bottleneck.
+
+# HOUSE VIEW (BOTTOM)
+Buy the fuel cycle, sell the headline.
+
+# CLOSING
+Watch the political consensus.
+"""
+
+
+def test_disagreement_block_extracted() -> None:
+    parsed = parse_edited(SAMPLE_WITH_BEAR_AND_DISAGREEMENT)
+    assert "financing trap" in str(parsed["disagreement"])
+
+
+def test_bear_case_block_extracted() -> None:
+    parsed = parse_edited(SAMPLE_WITH_BEAR_AND_DISAGREEMENT)
+    assert "Kazakh swing" in str(parsed["bear_case"])
+
+
+def test_disagreement_none_means_empty() -> None:
+    """`(none)` is the literal the EIC writes when there's no real
+    disagreement. The renderer treats empty as 'skip the callout'."""
+    text = SAMPLE_WITH_BEAR_AND_DISAGREEMENT.replace(
+        "Henrik likes the conversion bottleneck; Priya thinks the equity is a financing trap.",
+        "(none)",
+    )
+    parsed = parse_edited(text)
+    assert parsed["disagreement"] == ""
+
+
+def test_revised_sections_dont_swallow_following_blocks() -> None:
+    """Regression: with new # DISAGREEMENT / # BEAR CASE blocks between
+    REVISED SECTIONS and HOUSE VIEW (BOTTOM), the section parser must not
+    pull them into the analyst sections."""
+    parsed = parse_edited(SAMPLE_WITH_BEAR_AND_DISAGREEMENT)
+    sections = parsed["sections"]
+    assert len(sections) == 2  # type: ignore[arg-type]
+    for s in sections:  # type: ignore[union-attr]
+        body = s["body"]  # type: ignore[index]
+        assert "DISAGREEMENT" not in body
+        assert "BEAR CASE" not in body
+        assert "HOUSE VIEW" not in body

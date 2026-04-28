@@ -23,6 +23,20 @@
   {{ section.body_html | safe }}
 {% endfor %}
 
+{% if disagreement_html %}
+<div class="callout callout--amber">
+  <span class="label">Where the desk disagrees.</span>
+  {{ disagreement_html | safe }}
+</div>
+{% endif %}
+
+{% if bear_case_html %}
+<div class="callout callout--amber">
+  <span class="label">Where we'd be wrong.</span>
+  {{ bear_case_html | safe }}
+</div>
+{% endif %}
+
 {% if house_view_bottom %}
 <div class="callout callout--house">
   <span class="label">Bottom line.</span> {{ house_view_bottom }}

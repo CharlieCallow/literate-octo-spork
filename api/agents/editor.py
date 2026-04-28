@@ -130,12 +130,18 @@ Be opinionated. This is the brief the team works from.
         brief: str,
         sections: list[dict[str, str]],
         chart_summary: str,
+        bear_note: str | None = None,
     ) -> AgentResult:
         sec_blob = "\n\n---\n\n".join(
             f"## SECTION ({s['author']} — {s.get('role','analyst')}): {s['heading']}\n\n{s['body']}"
             for s in sections
         )
-        prompt = f"""You are editing a draft Forte Research report. Your job: tighten, kill weak claims, write the opening and the bottom-line. PRESERVE EACH SECTION'S VOICE — homogenising into a house voice is the failure mode. The brief is below for reference, then the analyst sections, then a summary of charts.
+        bear_blob = (
+            f"\nDEVIL'S ADVOCATE NOTE (Saoirse Mok, in-house bear):\n\n{bear_note}\n"
+            if bear_note else
+            "\n(No devil's advocate note this round.)\n"
+        )
+        prompt = f"""You are editing a draft Forte Research report. Your job: tighten, kill weak claims, write the opening and the bottom-line, integrate the bear case, and surface internal disagreement. PRESERVE EACH SECTION'S VOICE — homogenising into a house voice is the failure mode. The brief is below for reference, then the analyst sections, then a summary of charts, then Saoirse's bear note.
 
 BRIEF:
 
@@ -148,6 +154,12 @@ SECTIONS:
 CHARTS:
 
 {chart_summary}
+{bear_blob}
+Conviction tags: analysts mark claims with `{{c1}}` to `{{c5}}` (1 = throwaway, 5 = high conviction). CULL `{{c1}}` and `{{c2}}` claims when you compress; keep `{{c3}}+`. The tags themselves are stripped before render — just use them as a signal for what to cut.
+
+Disagreement: if two analyst sections take directionally different positions on the same question, surface it in the DISAGREEMENT block — name both views, name who holds each, name the data point that would resolve it. Voice through difference is the goal; consensus is the failure mode. If everyone agrees, write "(none)" and the section is skipped.
+
+Bear integration: take the strongest objection from Saoirse's note and put it in the BEAR CASE block — one paragraph in your voice, framed as "where we'd be wrong." Don't refute it — name it.
 
 Return JSON-ish markdown in EXACTLY this structure (use the literal headings — they're parsed):
 
@@ -164,6 +176,12 @@ Return JSON-ish markdown in EXACTLY this structure (use the literal headings —
 **role:** <role>
 
 <edited body. Keep their voice. Cut hedge-words. Demand evidence stays. ~200-400 words each.>>
+
+# DISAGREEMENT
+<If two sections disagree directionally, one short paragraph naming both views, who holds them, and what would resolve it. Otherwise write exactly: (none)>
+
+# BEAR CASE
+<One short paragraph in your voice integrating Saoirse's strongest objection: where we'd be wrong, and what falsifies the thesis. If there's no bear note, write exactly: (none)>
 
 # HOUSE VIEW (BOTTOM)
 <one short sentence — the bottom-line takeaway, navy callout at the end of the report.>

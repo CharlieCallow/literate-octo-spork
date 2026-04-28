@@ -148,6 +148,7 @@ table.kv tr:nth-child(even) td { background: transparent; }
 .callout--green { border-color: var(--green-border); background: var(--green-fill); }
 .callout--navy  { border-color: var(--navy-border);  background: var(--navy-fill); }
 .callout--amber { border-color: var(--amber-border); background: var(--amber-fill); }
+.callout--amber .label { color: var(--amber-border); font-weight: 600; }
 
 .callout--house {
   background: var(--forte-navy);
