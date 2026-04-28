@@ -613,12 +613,18 @@ def parse_edited(text: str) -> dict[str, object]:
 
 def _sections_for_render(parsed: dict[str, object], wd: Path) -> list[Section]:
     out: list[Section] = []
+    # Shared "used" set: each chart renders at most once across the whole PDF
+    # even if multiple sections reference the same filename.
+    used_charts: set[str] = set()
     if opening := parsed.get("opening"):
-        out.append(Section(heading="Opening", body_md=str(opening)))
+        out.append(Section(
+            heading="Opening",
+            body_md=_inline_charts(str(opening), wd, used=used_charts),
+        ))
 
     sections = parsed.get("sections", [])
     for s in sections:  # type: ignore[union-attr]
-        body = _inline_charts(str(s["body"]), wd)
+        body = _inline_charts(str(s["body"]), wd, used=used_charts)
         out.append(Section(
             heading=str(s["heading"]),
             body_md=body,
@@ -630,7 +636,7 @@ def _sections_for_render(parsed: dict[str, object], wd: Path) -> list[Section]:
     # references survive). Sits between the analyst sections and the closing.
     data_md = _read(wd / "data-section.md").strip()
     if data_md:
-        body = _inline_charts(_strip_heading(data_md), wd)
+        body = _inline_charts(_strip_heading(data_md), wd, used=used_charts)
         out.append(Section(
             heading="Data & charts",
             body_md=body,
@@ -639,23 +645,27 @@ def _sections_for_render(parsed: dict[str, object], wd: Path) -> list[Section]:
         ))
 
     if closing := parsed.get("closing"):
-        out.append(Section(heading="Closing", body_md=str(closing)))
+        out.append(Section(
+            heading="Closing",
+            body_md=_inline_charts(str(closing), wd, used=used_charts),
+        ))
     return out
 
 
 _CHART_TAG_RE = re.compile(r"\[chart:\s*(.+?)\s*\]")
 
 
-def _inline_charts(body: str, wd: Path) -> str:
+def _inline_charts(body: str, wd: Path, *, used: set[str] | None = None) -> str:
     """Replace `[chart: filename.png]` tags with <figure><img> blocks.
 
-    If the referenced chart is missing (typically a D&C agent that wrote a ref
-    before calling make_chart), fall back to the next available chart in the
-    directory rather than leaving a placeholder. Each existing chart is used
-    once at most, in filesystem order; surplus refs are stripped silently."""
+    Pass a shared `used` set across multiple calls (e.g. one per section) to
+    guarantee each chart renders at most once across the full document. If the
+    referenced chart is missing or already used, fall back to the next available
+    chart in the directory; surplus refs are stripped silently."""
     charts_dir = (wd / "charts").resolve()
     available: list[Path] = sorted(charts_dir.glob("*.png")) if charts_dir.exists() else []
-    used: set[str] = set()
+    if used is None:
+        used = set()
 
     def repl(m: re.Match[str]) -> str:
         fname = m.group(1).strip()
