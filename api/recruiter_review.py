@@ -32,6 +32,7 @@ def refresh_recommendations() -> int:
     with Session(engine) as session:
         added += _propose_promotions(session)
         added += _propose_fires_for_stale(session)
+        added += _propose_fires_for_underperformance(session)
         session.commit()
     log.info("recruiter review added %d new recommendations", added)
     return added
@@ -78,6 +79,47 @@ def _propose_promotions(session: Session) -> int:
                 f"Contributed to {contributions} report"
                 f"{'s' if contributions != 1 else ''} as a temp specialist. "
                 f"Recommend promotion to standing roster."
+            ),
+        ))
+        added += 1
+    return added
+
+
+UNDERPERFORM_MIN_GRADED = 5
+UNDERPERFORM_HIT_RATE = 0.30
+
+
+def _propose_fires_for_underperformance(session: Session) -> int:
+    """Suggest firing analysts whose graded performance ledger sits below
+    UNDERPERFORM_HIT_RATE with at least UNDERPERFORM_MIN_GRADED resolved
+    calls. The hit rate uses (hits + 0.5 * partials) / graded -- same as
+    the team page exposes."""
+    from api import calls as calls_mod
+    rates = calls_mod.hit_rate_by_persona()
+    if not rates:
+        return 0
+    added = 0
+    for member in get_roster():
+        slug = member["slug"]
+        if _has_open_rec(session, slug, RecommendationKind.fire):
+            continue
+        agg = rates.get(slug)
+        if not agg:
+            continue
+        graded = int(agg.get("graded", 0))
+        rate = float(agg.get("hit_rate", 0.0))
+        if graded < UNDERPERFORM_MIN_GRADED or rate >= UNDERPERFORM_HIT_RATE:
+            continue
+        session.add(Recommendation(
+            kind=RecommendationKind.fire,
+            subject_slug=slug,
+            subject_name=member["name"],
+            subject_role=member["role"],
+            reasoning=(
+                f"Hit rate of {rate:.0%} across {graded} graded calls is "
+                f"below the {UNDERPERFORM_HIT_RATE:.0%} threshold. "
+                f"Recommend firing -- archive the persona; rehire later if "
+                f"the strategy changes."
             ),
         ))
         added += 1

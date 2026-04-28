@@ -26,6 +26,11 @@ def env(monkeypatch, tmp_path):  # type: ignore[no-untyped-def]
 
     monkeypatch.setattr(db_module, "engine", eng)
     monkeypatch.setattr(review_module, "engine", eng)
+    # The new close-the-loop modules each cached `engine` at import time;
+    # patch theirs too so the recruiter's underperformance pass hits the
+    # same fixture engine instead of the dev DB.
+    import api.calls as calls_module
+    monkeypatch.setattr(calls_module, "engine", eng)
     import api.settings as settings_module
     monkeypatch.setattr(type(settings_module.settings), "team_dir", property(lambda self: standing))
     SQLModel.metadata.create_all(eng)
@@ -117,3 +122,73 @@ def test_dedupes_repeated_runs(env) -> None:  # type: ignore[no-untyped-def]
         s.commit()
     assert refresh_recommendations() == 1
     assert refresh_recommendations() == 0  # same rec already pending
+
+
+def test_fires_for_underperformance(env, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Persona with hit rate below 30% across >= 5 graded calls gets a fire
+    recommendation. Closes the loop: performance ledger -> recruiter."""
+    from sqlmodel import Session, select
+
+    from api.models import Call, CallDirection, CallOutcome, Recommendation, RecommendationKind
+    from api.recruiter_review import refresh_recommendations
+    eng, _, _ = env
+
+    # Patch api.calls to use the same engine.
+    import api.calls as calls_mod
+    monkeypatch.setattr(calls_mod, "engine", eng)
+
+    with Session(eng) as s:
+        _add_report(s, "macro-strategist", days_ago=2)
+        s.commit()
+        # 6 calls, 1 hit + 5 miss = ~17% hit rate (below 30% threshold).
+        for i, outcome in enumerate(
+            [CallOutcome.hit] + [CallOutcome.miss] * 5
+        ):
+            s.add(Call(
+                report_id=1, contributor_slug="macro-strategist",
+                asset=f"T{i}", direction=CallDirection.long,
+                price_at_call=100.0, evaluated_at=datetime.now(UTC),
+                outcome=outcome,
+            ))
+        s.commit()
+
+    n = refresh_recommendations()
+    with Session(eng) as s:
+        recs = s.exec(select(Recommendation).where(
+            Recommendation.kind == RecommendationKind.fire,
+        )).all()
+    fire_slugs = {r.subject_slug for r in recs}
+    assert "macro-strategist" in fire_slugs
+    assert n >= 1
+
+
+def test_no_underperformance_fire_when_too_few_calls(env, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Below the 5-call minimum we don't fire -- not enough signal yet."""
+    from sqlmodel import Session, select
+
+    from api.models import Call, CallDirection, CallOutcome, Recommendation, RecommendationKind
+    from api.recruiter_review import refresh_recommendations
+    eng, _, _ = env
+    import api.calls as calls_mod
+    monkeypatch.setattr(calls_mod, "engine", eng)
+
+    with Session(eng) as s:
+        _add_report(s, "macro-strategist", days_ago=2)
+        s.commit()
+        # Only 3 graded calls, all misses.
+        for i in range(3):
+            s.add(Call(
+                report_id=1, contributor_slug="macro-strategist",
+                asset=f"T{i}", direction=CallDirection.long,
+                price_at_call=100.0, evaluated_at=datetime.now(UTC),
+                outcome=CallOutcome.miss,
+            ))
+        s.commit()
+
+    refresh_recommendations()
+    with Session(eng) as s:
+        recs = s.exec(select(Recommendation).where(
+            Recommendation.kind == RecommendationKind.fire,
+            Recommendation.subject_slug == "macro-strategist",
+        )).all()
+    assert recs == []

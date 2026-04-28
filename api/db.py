@@ -120,6 +120,9 @@ def _migrate_sqlite() -> None:
             # Public share link
             ("reports", "ALTER TABLE reports ADD COLUMN share_token VARCHAR"),
             ("reports", "ALTER TABLE reports ADD COLUMN shared_at TIMESTAMP"),
+            # Close-the-loop: theme graph fields on the report row.
+            ("reports", "ALTER TABLE reports ADD COLUMN mentioned_tickers JSON DEFAULT '[]'"),
+            ("reports", "ALTER TABLE reports ADD COLUMN mentioned_themes JSON DEFAULT '[]'"),
         ]
         with engine.connect() as conn:
             for _table, sql in additions:
@@ -137,6 +140,9 @@ def _migrate_sqlite() -> None:
             "ALTER TABLE reports ADD COLUMN IF NOT EXISTS share_token VARCHAR",
             "ALTER TABLE reports ADD COLUMN IF NOT EXISTS shared_at TIMESTAMP",
             "CREATE INDEX IF NOT EXISTS ix_reports_share_token ON reports (share_token)",
+            # Close-the-loop: theme graph fields on the report row.
+            "ALTER TABLE reports ADD COLUMN IF NOT EXISTS mentioned_tickers JSON DEFAULT '[]'::json",
+            "ALTER TABLE reports ADD COLUMN IF NOT EXISTS mentioned_themes JSON DEFAULT '[]'::json",
             # uploaded_documents: created_all() handles fresh deploys; this
             # CREATE-IF-NOT-EXISTS keeps the table present on existing prod
             # databases that pre-date the upload feature.
