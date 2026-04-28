@@ -41,9 +41,9 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reportId]);
 
-  async function resume(fromStage?: ReportStage) {
+  async function resume(fromStage?: ReportStage, cleanSlate = false) {
     if (!report) return;
-    try { await api.resume(report.id, fromStage); } catch (e) { setError(String(e)); }
+    try { await api.resume(report.id, fromStage, cleanSlate); } catch (e) { setError(String(e)); }
   }
 
   async function cancel() {
@@ -88,6 +88,16 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
                 <>
                   <button onClick={() => resume()} style={{ padding: "3px 12px", fontSize: 12 }}>
                     Resume
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (window.confirm("Clean slate: deletes all draft files / charts and re-runs from brief. Continue?")) {
+                        resume("brief", true);
+                      }
+                    }}
+                    style={{ padding: "3px 12px", fontSize: 12, background: "#FFF", color: "var(--forte-ink)", border: "1px solid var(--forte-rule)" }}
+                  >
+                    Clean slate
                   </button>
                   <details style={{ display: "inline-block" }}>
                     <summary style={{ cursor: "pointer", fontSize: 12, color: "var(--forte-purple)" }}>

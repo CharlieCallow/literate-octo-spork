@@ -155,11 +155,16 @@ export const api = {
     req<Recommendation>(`/recruiter/recommendations/${id}/dismiss`, { method: "POST" }),
   createReport: (p: CreateReportPayload) =>
     req<Report>("/reports", { method: "POST", body: JSON.stringify(p) }),
-  resume: (id: number, fromStage?: ReportStage) => {
-    const qs = fromStage ? `?from_stage=${fromStage}` : "";
+  resume: (id: number, fromStage?: ReportStage, cleanSlate?: boolean) => {
+    const params = new URLSearchParams();
+    if (fromStage) params.set("from_stage", fromStage);
+    if (cleanSlate) params.set("clean_slate", "true");
+    const qs = params.toString() ? `?${params}` : "";
     return req<Report>(`/reports/${id}/resume${qs}`, { method: "POST" });
   },
   cancel: (id: number) => req<Report>(`/reports/${id}/cancel`, { method: "POST" }),
+  listArchive: () => req<{ slug: string; name: string; role: string }[]>("/team/archive"),
+  rehire: (slug: string) => req<{ slug: string; name: string; role: string; markdown: string }>(`/team/${slug}/rehire`, { method: "POST" }),
   pdfUrl: (id: number) => `${API_BASE}/reports/${id}/pdf`,
 
   // Scout

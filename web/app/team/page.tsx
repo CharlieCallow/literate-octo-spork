@@ -4,15 +4,28 @@ import { AuthGate } from "@/components/Auth";
 import { RecommendationsCard } from "@/components/RecommendationsCard";
 import { api, type TeamMember } from "@/lib/api";
 
+interface ArchivedMember { slug: string; name: string; role: string; }
+
 export default function TeamPage() {
   const [members, setMembers] = useState<TeamMember[]>([]);
+  const [archived, setArchived] = useState<ArchivedMember[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
     api.listTeam().then(setMembers).catch((e) => setError(String(e)));
+    api.listArchive().then(setArchived).catch(() => { /* archive is optional */ });
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  async function rehire(slug: string) {
+    try {
+      await api.rehire(slug);
+      load();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
 
   return (
     <AuthGate>
@@ -37,6 +50,29 @@ export default function TeamPage() {
           </p>
         </div>
       ))}
+
+      {archived.length > 0 && (
+        <div className="card">
+          <div className="byline">Archive</div>
+          <p className="muted" style={{ fontSize: 12, margin: "0 0 8px" }}>
+            Fired personas. Click rehire to bring them back to the standing roster.
+          </p>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+            {archived.map((a) => (
+              <li key={a.slug} style={{ padding: "6px 0", borderTop: "1px solid var(--forte-rule)" }}>
+                <strong>{a.name}</strong>{" "}
+                <span className="muted">— {a.role}</span>{" "}
+                <button
+                  onClick={() => rehire(a.slug)}
+                  style={{ padding: "2px 10px", fontSize: 11, marginLeft: 8 }}
+                >
+                  Rehire
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </AuthGate>
   );
 }

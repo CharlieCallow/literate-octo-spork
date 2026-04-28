@@ -150,15 +150,45 @@ def list_jobs(report_id: int, session: Session = Depends(get_session)) -> list[J
     ]
 
 
+class StageEstimate(BaseModel):
+    stage: ReportStage
+    seconds: float
+
+
+@router.get("/eta/stage_durations", response_model=list[StageEstimate], dependencies=[Depends(require_auth)])
+def stage_durations(session: Session = Depends(get_session)) -> list[StageEstimate]:
+    """Average per-stage duration in seconds, computed from completed Jobs.
+    The frontend uses this to compute a smarter ETA than the static estimate."""
+    rows = session.exec(
+        select(Job).where(
+            Job.status == "done",
+            Job.started_at.is_not(None),  # type: ignore[union-attr]
+            Job.finished_at.is_not(None),  # type: ignore[union-attr]
+        )
+    ).all()
+    by_stage: dict[ReportStage, list[float]] = {}
+    for j in rows:
+        if j.started_at and j.finished_at:
+            dur = (j.finished_at - j.started_at).total_seconds()
+            if 0 < dur < 3600:  # ignore outliers / clock skew
+                by_stage.setdefault(j.stage, []).append(dur)
+    return [
+        StageEstimate(stage=s, seconds=sum(xs) / len(xs))
+        for s, xs in by_stage.items()
+    ]
+
+
 @router.post("/{report_id}/resume", response_model=ReportOut, dependencies=[Depends(require_auth)])
 def resume(
     report_id: int,
     from_stage: ReportStage | None = None,
+    clean_slate: bool = False,
     session: Session = Depends(get_session),
 ) -> ReportOut:
     """Re-queue a failed or cancelled report. By default resumes from the last
     attempted stage; pass ?from_stage=research (or any earlier stage) to redo
-    work from there. Workflow stages are idempotent."""
+    work from there. ?clean_slate=true wipes the working directory first so
+    no stale artifacts remain. Workflow stages are idempotent."""
     report = session.get(Report, report_id)
     if not report:
         raise HTTPException(404, "Report not found")
@@ -174,6 +204,17 @@ def resume(
             select(Job).where(Job.report_id == report_id).order_by(Job.created_at.desc())  # type: ignore[attr-defined]
         ).first()
         resume_stage = last_job.stage if last_job else ReportStage.brief
+
+    if clean_slate:
+        # Nuke the working directory so the agent doesn't pick up stale notes.
+        import shutil
+
+        from api.workflow.state_machine import working_dir
+        wd = working_dir(report_id)
+        if wd.exists():
+            shutil.rmtree(wd)
+        # Also clear pdf_path so the dashboard stops showing the old one.
+        report.pdf_path = None
 
     report.stage = resume_stage
     report.error = None
