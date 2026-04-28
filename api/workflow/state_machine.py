@@ -727,12 +727,12 @@ def _inline_charts(body: str, wd: Path, *, used: set[str] | None = None) -> str:
         path = (charts_dir / fname)
         if path.exists() and fname not in used:
             used.add(fname)
-            return f'<figure><img src="{path.as_uri()}" alt="{fname}"></figure>'
+            return f'\n<figure><img src="{path.as_uri()}" alt="{fname}"></figure>\n'
         # Substitute the next unused chart in the directory.
         for cand in available:
             if cand.name not in used:
                 used.add(cand.name)
-                return f'<figure><img src="{cand.as_uri()}" alt="{cand.name}"></figure>'
+                return f'\n<figure><img src="{cand.as_uri()}" alt="{cand.name}"></figure>\n'
         # No charts left. Drop the reference quietly.
         return ""
 
