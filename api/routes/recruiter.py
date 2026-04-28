@@ -12,7 +12,6 @@ from api.auth import require_auth
 from api.db import get_session
 from api.models import Recommendation, RecommendationKind, RecommendationStatus
 from api.recruiter_review import refresh_recommendations
-from api.settings import settings
 
 router = APIRouter(prefix="/recruiter", tags=["recruiter"])
 
@@ -73,26 +72,19 @@ def approve(rec_id: int, session: Session = Depends(get_session)) -> Recommendat
     if rec.status != RecommendationStatus.pending:
         raise HTTPException(400, f"Recommendation is already {rec.status}")
 
+    from api import personas
+    from api.models import PersonaStatus
+
     if rec.kind == RecommendationKind.promote:
-        src = settings.team_dir / "temp" / f"{rec.subject_slug}.md"
-        dst = settings.team_dir / f"{rec.subject_slug}.md"
-        if not src.exists():
-            raise HTTPException(409, f"Temp persona missing: {src.name}")
-        if dst.exists():
-            raise HTTPException(409, f"Standing persona already exists: {dst.name}")
-        src.rename(dst)
+        p = personas.get(rec.subject_slug)
+        if p is None:
+            raise HTTPException(409, f"Temp persona missing in DB: {rec.subject_slug}")
+        personas.set_status(rec.subject_slug, PersonaStatus.standing)
     elif rec.kind == RecommendationKind.fire:
-        src = settings.team_dir / f"{rec.subject_slug}.md"
-        archive_dir = settings.team_dir / "archive"
-        archive_dir.mkdir(exist_ok=True)
-        dst = archive_dir / f"{rec.subject_slug}.md"
-        if not src.exists():
-            raise HTTPException(409, f"Standing persona missing: {src.name}")
-        # If archive already has this slug (re-fired after rehire), suffix with timestamp.
-        if dst.exists():
-            ts = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-            dst = archive_dir / f"{rec.subject_slug}-{ts}.md"
-        src.rename(dst)
+        p = personas.get(rec.subject_slug)
+        if p is None:
+            raise HTTPException(409, f"Standing persona missing in DB: {rec.subject_slug}")
+        personas.set_status(rec.subject_slug, PersonaStatus.archived)
 
     rec.status = RecommendationStatus.approved
     rec.resolved_at = datetime.now(UTC)

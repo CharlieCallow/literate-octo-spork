@@ -55,22 +55,43 @@ DC_DISPLAY  = {"name": "Tomás Reyes",    "role": "Data & Charts"}
 
 
 def get_roster() -> list[dict[str, str]]:
-    """Read the active analyst roster from team/*.md.
-    Re-read each call so promotions / firings take effect immediately."""
+    """Active analyst roster (status=standing, non-orchestrator). Reads from
+    DB so promotions / firings via the Recruiter take effect immediately.
+    Falls back to a FS scan in test contexts where the personas table
+    hasn't been created yet."""
     out: list[dict[str, str]] = []
+    try:
+        from api import personas as personas_module
+        from api.models import PersonaStatus
+        rows = personas_module.list_by_status(PersonaStatus.standing)
+        for p in rows:
+            if p.is_orchestrator or p.slug in _NON_ROSTER_SLUGS:
+                continue
+            out.append({
+                "slug": p.slug,
+                "name": p.name or p.slug.replace("-", " ").title(),
+                "role": p.role or "Analyst",
+            })
+        if out:
+            return out
+    except Exception:  # noqa: BLE001 - defensive: DB may not exist (tests)
+        pass
+
+    # FS fallback for unseeded tests.
+    fs_out: list[dict[str, str]] = []
     if not settings.team_dir.exists():
-        return out
-    for p in sorted(settings.team_dir.glob("*.md")):
-        slug = p.stem
+        return fs_out
+    for path in sorted(settings.team_dir.glob("*.md")):
+        slug = path.stem
         if slug in _NON_ROSTER_SLUGS:
             continue
-        text = p.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8")
         m = _HEADER_RE.search(text)
         if m:
-            out.append({"slug": slug, "name": m.group("name").strip(), "role": m.group("role").strip()})
+            fs_out.append({"slug": slug, "name": m.group("name").strip(), "role": m.group("role").strip()})
         else:
-            out.append({"slug": slug, "name": slug.replace("-", " ").title(), "role": "Analyst"})
-    return out
+            fs_out.append({"slug": slug, "name": slug.replace("-", " ").title(), "role": "Analyst"})
+    return fs_out
 
 
 def get_roster_map() -> dict[str, dict[str, str]]:
@@ -297,7 +318,9 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             except Exception as e:  # noqa: BLE001
                 log_lines.append(f"- `{slug}`: failed -- {e}")
                 continue
-            (temp_dir / f"{slug}.md").write_text(fb.text, encoding="utf-8")
+            from api import personas
+            from api.models import PersonaStatus
+            personas.upsert(slug, fb.text, status=PersonaStatus.temp)
             _record(report.id, wd, fb)
             log_lines.append(f"- `{slug}`: hired ({request})")
 

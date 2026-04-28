@@ -79,6 +79,37 @@ def get_persona(slug: str, session: Session = Depends(get_session)) -> PersonaOu
     )
 
 
+class ArchivedMember(BaseModel):
+    slug: str
+    name: str
+    role: str
+
+
+@router.get("/archive", response_model=list[ArchivedMember], dependencies=[Depends(require_auth)])
+def list_archive() -> list[ArchivedMember]:
+    """List archived (fired) personas. Each can be rehired via /team/{slug}/rehire."""
+    from api import personas as personas_module
+    from api.models import PersonaStatus
+    return [
+        ArchivedMember(slug=p.slug, name=p.name or p.slug, role=p.role or "Analyst")
+        for p in personas_module.list_by_status(PersonaStatus.archived)
+    ]
+
+
+@router.post("/{slug}/rehire", response_model=PersonaOut, dependencies=[Depends(require_auth)])
+def rehire(slug: str, session: Session = Depends(get_session)) -> PersonaOut:
+    """Move an archived persona back to the standing roster."""
+    from api import personas
+    from api.models import PersonaStatus
+    p = personas.get(slug)
+    if not p:
+        raise HTTPException(404, f"Unknown persona: {slug}")
+    if p.status != PersonaStatus.archived:
+        raise HTTPException(400, f"Persona is not archived (status={p.status})")
+    personas.set_status(slug, PersonaStatus.standing)
+    return get_persona(slug, session)
+
+
 @router.put("/{slug}", response_model=PersonaOut, dependencies=[Depends(require_auth)])
 def update_persona(
     slug: str,
@@ -87,12 +118,10 @@ def update_persona(
 ) -> PersonaOut:
     if slug not in get_roster_map():
         raise HTTPException(404, f"Unknown contributor: {slug}")
-    persona_path = settings.team_dir / f"{slug}.md"
-    if not persona_path.exists():
-        raise HTTPException(404, f"Persona file missing: {persona_path.name}")
     if not payload.markdown.strip():
         raise HTTPException(400, "Persona markdown cannot be empty")
     if not payload.markdown.lstrip().startswith("# "):
         raise HTTPException(400, "Persona must start with a top-level heading (# Name)")
-    persona_path.write_text(payload.markdown, encoding="utf-8")
+    from api import personas
+    personas.upsert(slug, payload.markdown)
     return get_persona(slug, session)

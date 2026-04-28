@@ -43,6 +43,12 @@ def init_db() -> None:
     SQLModel.metadata.create_all(engine)
     _migrate_sqlite()
 
+    # Persona persistence: seed from FS the first time, then hydrate FS from
+    # DB so promotions / firings / manual edits survive Railway rebuilds.
+    from api.personas import hydrate_filesystem, seed_from_filesystem
+    seed_from_filesystem()
+    hydrate_filesystem()
+
 
 def _migrate_sqlite() -> None:
     """Add columns introduced after the first ship. SQLite-only; no-op elsewhere."""

@@ -140,3 +140,26 @@ class Recommendation(SQLModel, table=True):
     status: RecommendationStatus = Field(default=RecommendationStatus.pending, index=True)
     created_at: datetime = Field(default_factory=_now)
     resolved_at: datetime | None = None
+
+
+class PersonaStatus(str, Enum):
+    standing = "standing"  # appears in /team roster, available to be assigned
+    temp = "temp"          # ad-hoc specialist for one report (lives in team/temp/)
+    archived = "archived"  # fired; rehirable from /team archive (lives in team/archive/)
+
+
+class Persona(SQLModel, table=True):
+    """Source of truth for persona files. The filesystem is a write-through
+    cache rehydrated from these rows at startup so Railway rebuilds don't
+    lose promotions / firings / manual edits."""
+
+    __tablename__ = "personas"
+
+    slug: str = Field(primary_key=True)
+    status: PersonaStatus = Field(default=PersonaStatus.standing, index=True)
+    markdown: str
+    name: str = ""
+    role: str = ""
+    is_orchestrator: bool = False  # editor-in-chief, scout, recruiter, data-and-charts
+    created_at: datetime = Field(default_factory=_now)
+    updated_at: datetime = Field(default_factory=_now)
