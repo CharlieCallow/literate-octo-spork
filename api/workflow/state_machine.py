@@ -521,10 +521,11 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
                 log_entries.append(f"## {c['name']}\n\n_feedback failed: {e}_\n")
                 continue
             _record(report.id, wd, fb)
-            persona_path = settings.team_dir / f"{c['slug']}.md"
             try:
-                from api.feedback import append_entry
-                append_entry(persona_path, body=fb.text, report_id=report.id)
+                from api.feedback import append_to_persona
+                if not append_to_persona(c["slug"], body=fb.text, report_id=report.id):
+                    log_entries.append(f"## {c['name']}\n\n_persona not found in DB_\n{fb.text}\n")
+                    continue
             except Exception as e:  # noqa: BLE001
                 log_entries.append(f"## {c['name']}\n\n_failed to append: {e}_\n{fb.text}\n")
                 continue
