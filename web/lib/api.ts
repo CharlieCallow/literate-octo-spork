@@ -168,6 +168,21 @@ export interface ScoutRun {
   error: string | null;
 }
 
+export interface ShareInfo {
+  report_id: number;
+  share_token: string | null;
+  shared_at: string | null;
+}
+
+export interface PublicReport {
+  id: number;
+  theme: string;
+  subtitle: string | null;
+  contributor_slugs: string[];
+  created_at: string;
+  has_pdf: boolean;
+}
+
 export const api = {
   listReports: () => req<Report[]>("/reports"),
   getReport: (id: number) => req<Report>(`/reports/${id}`),
@@ -224,6 +239,34 @@ export const api = {
   pdfUrl: (id: number) => `${API_BASE}/reports/${id}/pdf`,
   chartJsonUrl: (reportId: number, filename: string) =>
     `${API_BASE}/reports/${reportId}/chart.json?filename=${encodeURIComponent(filename)}`,
+
+  // Public share links
+  getShare: (id: number) => req<ShareInfo>(`/reports/${id}/share`),
+  createShare: (id: number, rotate = false) =>
+    req<ShareInfo>(`/reports/${id}/share${rotate ? "?rotate=true" : ""}`, { method: "POST" }),
+  revokeShare: (id: number) => req<ShareInfo>(`/reports/${id}/share`, { method: "DELETE" }),
+
+  // Public (unauthenticated) reads -- used by the share viewer page.
+  getPublicReport: async (id: number, token: string): Promise<PublicReport> => {
+    const res = await fetch(`${API_BASE}/reports/${id}/share/${encodeURIComponent(token)}`);
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    return (await res.json()) as PublicReport;
+  },
+  publicPdfUrl: (id: number, token: string) =>
+    `${API_BASE}/reports/${id}/share/${encodeURIComponent(token)}/pdf`,
+  publicChartJsonUrl: (id: number, token: string, filename: string) =>
+    `${API_BASE}/reports/${id}/share/${encodeURIComponent(token)}/chart.json?filename=${encodeURIComponent(filename)}`,
+  listPublicChartFiles: async (id: number, token: string): Promise<{ filename: string; has_json: boolean }[]> => {
+    const res = await fetch(`${API_BASE}/reports/${id}/share/${encodeURIComponent(token)}/charts`);
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    return (await res.json()) as { filename: string; has_json: boolean }[];
+  },
+  getPublicChartJson: async (id: number, token: string, filename: string): Promise<ChartSpec> => {
+    const url = `${API_BASE}/reports/${id}/share/${encodeURIComponent(token)}/chart.json?filename=${encodeURIComponent(filename)}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    return (await res.json()) as ChartSpec;
+  },
 
   // Scout
   latestThemes: () => req<Theme[]>("/scout/themes"),

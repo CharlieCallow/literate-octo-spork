@@ -103,29 +103,48 @@ def _clear_stale_pdf_paths() -> None:
 
 def _migrate_sqlite() -> None:
     """Add columns introduced after the first ship. SQLite-only; no-op elsewhere."""
-    if not _DB_URL.startswith("sqlite"):
+    if _DB_URL.startswith("sqlite"):
+        additions: list[tuple[str, str]] = [
+            # M2 cost-mode work
+            ("reports", "ALTER TABLE reports ADD COLUMN mode VARCHAR DEFAULT 'standard'"),
+            # M2 sprint 3: per-stage cost + retry scheduling
+            ("jobs",    "ALTER TABLE jobs ADD COLUMN cost_usd REAL DEFAULT 0.0"),
+            ("jobs",    "ALTER TABLE jobs ADD COLUMN run_after TIMESTAMP"),
+            # M2 sprint 4: per-report budget + team override
+            ("reports", "ALTER TABLE reports ADD COLUMN budget_cap_usd REAL"),
+            ("reports", "ALTER TABLE reports ADD COLUMN team_override JSON DEFAULT '[]'"),
+            # M3: Scout themes are linked back to the report they spawn
+            ("themes",  "ALTER TABLE themes ADD COLUMN commissioned_report_id INTEGER"),
+            # M4: contributor_slugs records who actually worked on the report
+            ("reports", "ALTER TABLE reports ADD COLUMN contributor_slugs JSON DEFAULT '[]'"),
+            # Public share link
+            ("reports", "ALTER TABLE reports ADD COLUMN share_token VARCHAR"),
+            ("reports", "ALTER TABLE reports ADD COLUMN shared_at TIMESTAMP"),
+        ]
+        with engine.connect() as conn:
+            for _table, sql in additions:
+                try:
+                    conn.exec_driver_sql(sql)
+                    conn.commit()
+                except Exception:
+                    pass  # column already exists
         return
-    additions: list[tuple[str, str]] = [
-        # M2 cost-mode work
-        ("reports", "ALTER TABLE reports ADD COLUMN mode VARCHAR DEFAULT 'standard'"),
-        # M2 sprint 3: per-stage cost + retry scheduling
-        ("jobs",    "ALTER TABLE jobs ADD COLUMN cost_usd REAL DEFAULT 0.0"),
-        ("jobs",    "ALTER TABLE jobs ADD COLUMN run_after TIMESTAMP"),
-        # M2 sprint 4: per-report budget + team override
-        ("reports", "ALTER TABLE reports ADD COLUMN budget_cap_usd REAL"),
-        ("reports", "ALTER TABLE reports ADD COLUMN team_override JSON DEFAULT '[]'"),
-        # M3: Scout themes are linked back to the report they spawn
-        ("themes",  "ALTER TABLE themes ADD COLUMN commissioned_report_id INTEGER"),
-        # M4: contributor_slugs records who actually worked on the report
-        ("reports", "ALTER TABLE reports ADD COLUMN contributor_slugs JSON DEFAULT '[]'"),
-    ]
-    with engine.connect() as conn:
-        for _table, sql in additions:
-            try:
-                conn.exec_driver_sql(sql)
-                conn.commit()
-            except Exception:
-                pass  # column already exists
+
+    if _DB_URL.startswith("postgresql"):
+        # Postgres prod columns added before this commit were applied by hand /
+        # by table recreate. Use IF NOT EXISTS so this stays idempotent.
+        pg_additions: list[str] = [
+            "ALTER TABLE reports ADD COLUMN IF NOT EXISTS share_token VARCHAR",
+            "ALTER TABLE reports ADD COLUMN IF NOT EXISTS shared_at TIMESTAMP",
+            "CREATE INDEX IF NOT EXISTS ix_reports_share_token ON reports (share_token)",
+        ]
+        with engine.connect() as conn:
+            for sql in pg_additions:
+                try:
+                    conn.exec_driver_sql(sql)
+                    conn.commit()
+                except Exception:
+                    pass
 
 
 def get_session() -> Iterator[Session]:
