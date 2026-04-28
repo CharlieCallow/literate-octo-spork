@@ -14,11 +14,13 @@ from pathlib import Path
 from sqlmodel import Session, select
 
 from api.agents.analyst import Analyst
+from api.agents.auditor import Auditor
 from api.agents.base import AgentResult, Citation
 from api.agents.charts import DataAndCharts
 from api.agents.cost import CostTracker
 from api.agents.editor import EditorInChief
 from api.agents.recruiter import Recruiter
+from api.agents.redteam import RedTeam
 from api.db import engine
 from api.models import AuditLog, Report, ReportMode, ReportStage
 from api.render.pdf import Contributor, Section, render_pdf
@@ -33,7 +35,9 @@ STAGE_ORDER: list[ReportStage] = [
     ReportStage.research,
     ReportStage.charts,
     ReportStage.draft,
+    ReportStage.redteam,
     ReportStage.edit,
+    ReportStage.audit,
     ReportStage.render,
     ReportStage.feedback,
     ReportStage.done,
@@ -49,7 +53,7 @@ STAGE_ORDER: list[ReportStage] = [
 
 # Slugs that are agents-with-roles, not contributors. They have personas but
 # don't appear in the roster pickers.
-_NON_ROSTER_SLUGS = {"editor-in-chief", "data-and-charts", "scout", "recruiter"}
+_NON_ROSTER_SLUGS = {"editor-in-chief", "data-and-charts", "scout", "recruiter", "devils-advocate"}
 
 EIC_DISPLAY = {"name": "Margaux Devlin", "role": "Editor-in-Chief"}
 DC_DISPLAY  = {"name": "Tomás Reyes",    "role": "Data & Charts"}
@@ -166,6 +170,36 @@ def _record(report_id: int, wd: Path, result: AgentResult) -> None:
     _persist_cost(report_id, result.cost_usd)
     if result.citations:
         _append_citations(wd, result.citations)
+
+
+def _append_tool_outputs(wd: Path, agent_slug: str, result: AgentResult) -> None:
+    """Append a JSONL ledger of every tool call this agent ran.
+
+    Read by the audit stage to ground numerical claims in the final prose
+    against what the tools actually returned. One line per call:
+    {agent, tool, input, output}."""
+    if not result.tool_outputs:
+        return
+    ledger = wd / "tool-outputs.jsonl"
+    with ledger.open("a", encoding="utf-8") as f:
+        for to in result.tool_outputs:
+            f.write(json.dumps({
+                "agent": agent_slug,
+                "tool": to.tool,
+                "input": to.input,
+                "output": to.output,
+            }) + "\n")
+
+
+# Conviction tags the analyst writes inline ({c1}..{c5}). They're an editorial
+# signal for the EIC -- drop them from the rendered prose. Eat any preceding
+# spaces (but not newlines) so we don't leave a stray space before the next
+# punctuation mark.
+_CONVICTION_TAG_RE = re.compile(r" *\{c[1-5]\}")
+
+
+def _strip_conviction_tags(md: str) -> str:
+    return _CONVICTION_TAG_RE.sub("", md)
 
 
 MAX_SOURCES = 18  # cap the Sources section so the report stays tidy
@@ -397,6 +431,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         for c, result in zip(contributors, results, strict=True):
             _write(wd / f"notes-{c['slug']}.md", result.text)
             _record(report.id, wd, result)
+            _append_tool_outputs(wd, c["slug"], result)
         return _next_stage(stage)
 
     if stage == ReportStage.charts:
@@ -406,6 +441,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         result = dc.build(brief, all_notes, wd / "charts", mode=report.mode)
         _write(wd / "data-section.md", result.text)
         _record(report.id, wd, result)
+        _append_tool_outputs(wd, "data-and-charts", result)
         return _next_stage(stage)
 
     if stage == ReportStage.draft:
@@ -426,6 +462,33 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             _record(report.id, wd, result)
         return _next_stage(stage)
 
+    if stage == ReportStage.redteam:
+        # Saoirse reads the drafts and writes the strongest counter-thesis.
+        # Best-effort: if she fails, log it and move on; the EIC will still
+        # produce a report, just without the bear case integrated.
+        brief = _read(wd / "brief.md")
+        contributors = _resolved_contributors(report, brief)
+        sections: list[dict[str, str]] = []
+        for c in contributors:
+            body_md = _read(wd / f"section-{c['slug']}.md")
+            if body_md.strip():
+                sections.append({
+                    "heading": _heading(body_md) or c["role"],
+                    "body": _strip_heading(body_md),
+                    "author": c["name"],
+                    "role": c["role"],
+                })
+        chart_summary = _list_charts(wd / "charts")
+        try:
+            rt = RedTeam(cost, audit=audit, model=models["analyst"])
+            result = rt.critique(brief=brief, sections=sections, chart_summary=chart_summary)
+            _write(wd / "redteam.md", result.text)
+            _record(report.id, wd, result)
+        except Exception as e:  # noqa: BLE001
+            log.exception("redteam stage failed (non-blocking)")
+            _write(wd / "redteam.md", f"_red-team pass failed: {e}_\n")
+        return _next_stage(stage)
+
     if stage == ReportStage.edit:
         eic = EditorInChief(cost, audit=audit, model=models["editor"])
         brief = _read(wd / "brief.md")
@@ -444,13 +507,42 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
                 "role": c["role"],
             })
         chart_summary = _list_charts(wd / "charts")
-        result = eic.edit(brief=brief, sections=sections, chart_summary=chart_summary)
+        bear_note = _read(wd / "redteam.md").strip()
+        result = eic.edit(
+            brief=brief, sections=sections,
+            chart_summary=chart_summary,
+            bear_note=bear_note or None,
+        )
         _write(wd / "edited.md", result.text)
         _record(report.id, wd, result)
         return _next_stage(stage)
 
-    if stage == ReportStage.render:
+    if stage == ReportStage.audit:
+        # Ground every numerical claim in the edited prose against the
+        # tool-output ledger. Best-effort: a failure just means the unaudited
+        # prose flows through to render unchanged.
         edited = _read(wd / "edited.md")
+        ledger = _read(wd / "tool-outputs.jsonl")
+        if not edited.strip() or not ledger.strip():
+            return _next_stage(stage)
+        try:
+            auditor = Auditor(cost, audit=audit)
+            result = auditor.review(edited=edited, tool_outputs_jsonl=ledger)
+            _write(wd / "audited.md", result.text)
+            _record(report.id, wd, result)
+        except Exception as e:  # noqa: BLE001
+            log.exception("audit stage failed (non-blocking)")
+            _write(wd / "audited.md", "")  # empty marker -> render falls back to edited.md
+            _ = e
+        return _next_stage(stage)
+
+    if stage == ReportStage.render:
+        # Prefer audited prose if the audit stage produced one. Strip the
+        # analyst's conviction tags ({c1}..{c5}) before parsing so they don't
+        # appear in the rendered PDF.
+        audited = _read(wd / "audited.md").strip()
+        edited = audited or _read(wd / "edited.md")
+        edited = _strip_conviction_tags(edited)
         brief = _read(wd / "brief.md")
         parsed = parse_edited(edited)
         out = wd / "report.pdf"
@@ -479,6 +571,8 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             sections=cited_sections,
             house_view_top=parsed.get("house_view_top"),
             house_view_bottom=parsed.get("house_view_bottom"),
+            disagreement=parsed.get("disagreement") or None,
+            bear_case=parsed.get("bear_case") or None,
             read_minutes=8,
             sources=ordered_sources,
         )
@@ -638,11 +732,16 @@ def parse_brief(text: str) -> dict[str, object]:
 
 # ---------- edited markdown parsing ----------
 
-_HOUSE_TOP_RE = re.compile(r"^# HOUSE VIEW \(TOP\)\s*\n(.+?)(?=\n# |\Z)", re.S | re.M)
-_HOUSE_BOT_RE = re.compile(r"^# HOUSE VIEW \(BOTTOM\)\s*\n(.+?)(?=\n# |\Z)", re.S | re.M)
-_OPENING_RE  = re.compile(r"^# OPENING\s*\n(.+?)(?=\n# |\Z)", re.S | re.M)
-_CLOSING_RE  = re.compile(r"^# CLOSING\s*\n(.+?)(?=\n# |\Z)", re.S | re.M)
-_REVISED_RE  = re.compile(r"^# REVISED SECTIONS\s*\n(.+?)(?=\n# HOUSE VIEW \(BOTTOM\)|\Z)", re.S | re.M)
+_HOUSE_TOP_RE   = re.compile(r"^# HOUSE VIEW \(TOP\)\s*\n(.+?)(?=\n# |\Z)", re.S | re.M)
+_HOUSE_BOT_RE   = re.compile(r"^# HOUSE VIEW \(BOTTOM\)\s*\n(.+?)(?=\n# |\Z)", re.S | re.M)
+_OPENING_RE     = re.compile(r"^# OPENING\s*\n(.+?)(?=\n# |\Z)", re.S | re.M)
+_CLOSING_RE     = re.compile(r"^# CLOSING\s*\n(.+?)(?=\n# |\Z)", re.S | re.M)
+_DISAGREE_RE    = re.compile(r"^# DISAGREEMENT\s*\n(.+?)(?=\n# |\Z)", re.S | re.M)
+_BEAR_CASE_RE   = re.compile(r"^# BEAR CASE\s*\n(.+?)(?=\n# |\Z)", re.S | re.M)
+# Stop at ANY top-level heading after REVISED SECTIONS so DISAGREEMENT,
+# BEAR CASE, HOUSE VIEW (BOTTOM) etc. don't get swallowed into the section
+# blob below.
+_REVISED_RE     = re.compile(r"^# REVISED SECTIONS\s*\n(.+?)(?=\n# |\Z)", re.S | re.M)
 _SECTION_BLOCK_RE = re.compile(
     r"^## (?P<heading>.+?)\n+\*\*author:\*\*\s*(?P<author>.+?)\n+\*\*role:\*\*\s*(?P<role>.+?)\n+(?P<body>.+?)(?=\n## |\Z)",
     re.S | re.M,
@@ -665,10 +764,16 @@ def parse_edited(text: str) -> dict[str, object]:
             "role": m.group("role").strip(),
             "body": m.group("body").strip(),
         })
+    # "(none)" or empty -> the renderer skips the callout block.
+    def _maybe(s: str) -> str:
+        return "" if not s or s.strip().lower().startswith("(none)") else s
+
     return {
         "opening": grab(_OPENING_RE),
         "house_view_top": grab(_HOUSE_TOP_RE),
         "sections": sections,
+        "disagreement": _maybe(grab(_DISAGREE_RE)),
+        "bear_case": _maybe(grab(_BEAR_CASE_RE)),
         "house_view_bottom": grab(_HOUSE_BOT_RE),
         "closing": grab(_CLOSING_RE),
     }

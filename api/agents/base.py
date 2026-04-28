@@ -43,11 +43,24 @@ class Citation:
 
 
 @dataclass
+class ToolOutput:
+    """A single tool call's input and output, captured during a run.
+
+    Persisted from the research + charts stages so the audit agent can
+    ground numbers in the final prose against what the tools actually
+    returned, instead of trusting the model not to hallucinate values."""
+    tool: str
+    input: dict[str, Any]
+    output: str
+
+
+@dataclass
 class AgentResult:
     text: str
     cost_usd: float
     citations: list[Citation] = field(default_factory=list)
     transcript: list[dict[str, Any]] = field(default_factory=list)
+    tool_outputs: list[ToolOutput] = field(default_factory=list)
 
 
 # Anthropic's web_search sometimes emits citation markup the model doesn't fully
@@ -199,6 +212,7 @@ class Agent:
         messages: list[dict[str, Any]] = [{"role": "user", "content": user_prompt}]
         transcript: list[dict[str, Any]] = []
         citations: list[Citation] = []
+        tool_outputs: list[ToolOutput] = []
         total_cost = 0.0
 
         for _ in range(max_iters):
@@ -238,6 +252,7 @@ class Agent:
                     cost_usd=total_cost,
                     citations=citations,
                     transcript=transcript,
+                    tool_outputs=tool_outputs,
                 )
 
             tool_results: list[dict[str, Any]] = []
@@ -255,6 +270,11 @@ class Agent:
                     out = tool.fn(**(block.input or {}))
                     self.audit("tool_call", {"agent": self.slug, "tool": block.name, "input": block.input})
                     _extract_local_citations(block.name, out, citations)
+                    tool_outputs.append(ToolOutput(
+                        tool=block.name,
+                        input=dict(block.input or {}),
+                        output=str(out),
+                    ))
                     tool_results.append({
                         "type": "tool_result", "tool_use_id": block.id,
                         "content": str(out),
@@ -274,6 +294,7 @@ class Agent:
             cost_usd=total_cost,
             citations=citations,
             transcript=transcript,
+            tool_outputs=tool_outputs,
         )
 
     def _call_with_429_backoff(self, kwargs: dict[str, Any]) -> Any:

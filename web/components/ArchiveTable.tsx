@@ -5,7 +5,7 @@ import { api, type Report, type ReportMode, type ReportStage } from "@/lib/api";
 type Sort = "newest" | "oldest" | "expensive";
 
 const ALL_STAGES: ReportStage[] = [
-  "queued", "brief", "research", "charts", "draft", "edit", "render", "feedback", "done", "failed",
+  "queued", "brief", "research", "charts", "draft", "redteam", "edit", "audit", "render", "feedback", "done", "failed",
 ];
 const ALL_MODES: ReportMode[] = ["fast", "standard", "deep"];
 

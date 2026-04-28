@@ -28,7 +28,7 @@ from api.settings import settings
 
 log = logging.getLogger("personas")
 
-ORCHESTRATOR_SLUGS = {"editor-in-chief", "data-and-charts", "scout", "recruiter"}
+ORCHESTRATOR_SLUGS = {"editor-in-chief", "data-and-charts", "scout", "recruiter", "devils-advocate"}
 _HEADER_RE = re.compile(r"^#\s+(?P<name>.+?)\s+(?:—|-+)\s+(?P<role>.+)$", re.M)
 
 
