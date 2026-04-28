@@ -6,10 +6,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from api import storage
 from api.auth import require_auth
 from api.db import get_session
 from api.models import AuditLog, Job, Report, ReportMode, ReportStage
@@ -99,15 +100,22 @@ def get_report(report_id: int, session: Session = Depends(get_session)) -> Repor
 
 @router.get("/{report_id}/charts", dependencies=[Depends(require_auth)])
 def list_chart_files(report_id: int) -> list[dict[str, object]]:
-    """List chart filenames generated for a report (PNG + JSON sidecars)."""
+    """List chart filenames generated for a report (PNG + JSON sidecars).
+    Falls back to R2 when the local FS doesn't have any."""
     from api.workflow.state_machine import working_dir
     wd = working_dir(report_id)
     charts_dir = wd / "charts"
-    if not charts_dir.exists():
-        return []
+    local_files = sorted(charts_dir.glob("*.png")) if charts_dir.exists() else []
+    if local_files:
+        return [
+            {"filename": p.name, "has_json": p.with_suffix(".json").exists()}
+            for p in local_files
+        ]
+    # No local charts -- check R2.
+    r2_files = storage.list_chart_files(report_id)
     return [
-        {"filename": p.name, "has_json": p.with_suffix(".json").exists()}
-        for p in sorted(charts_dir.glob("*.png"))
+        {"filename": name, "has_json": storage.object_exists(report_id, "charts", name.replace(".png", ".json"))}
+        for name in r2_files
     ]
 
 
@@ -118,47 +126,64 @@ def get_chart_json(
     session: Session = Depends(get_session),
 ) -> dict[str, object]:
     """Return the JSON sidecar for a chart so the dashboard can render it
-    interactively. `filename` is the PNG name (e.g. 'rates.png')."""
+    interactively. Falls back to R2 if the local file is gone."""
     import json as _json
 
     report = session.get(Report, report_id)
     if not report:
         raise HTTPException(404, "Report not found")
-    # Resolve the chart's sidecar relative to the report working dir.
+
     from api.workflow.state_machine import working_dir
     wd = working_dir(report_id)
     base = filename.rsplit(".", 1)[0]
     json_path = wd / "charts" / f"{base}.json"
+
     if not json_path.exists():
-        raise HTTPException(404, "Chart sidecar not found")
+        # Try R2 fetch into the local cache so future calls are fast.
+        fetched = storage.fetch_to_local(report_id, wd, "charts", f"{base}.json")
+        if fetched is None:
+            raise HTTPException(404, "Chart sidecar not found")
+        json_path = fetched
+
     return _json.loads(json_path.read_text(encoding="utf-8"))
 
 
 @router.get("/{report_id}/pdf", dependencies=[Depends(require_auth)])
-def get_pdf(report_id: int, session: Session = Depends(get_session)) -> FileResponse:
+def get_pdf(report_id: int, session: Session = Depends(get_session)):  # type: ignore[no-untyped-def]
     report = session.get(Report, report_id)
-    if not report or not report.pdf_path:
+    if not report:
+        raise HTTPException(404, "Report not found")
+
+    # Fast path: local file is present, serve it directly.
+    if report.pdf_path:
+        path = Path(report.pdf_path)
+        if path.exists():
+            return FileResponse(
+                path,
+                media_type="application/pdf",
+                filename=path.name,
+                headers={
+                    "Content-Disposition": f'inline; filename="{path.name}"',
+                    "Cache-Control": "private, max-age=3600",
+                },
+            )
+
+    # Local file missing. If R2 has it, redirect to a signed URL. The 302 is
+    # cacheable; the browser/iframe stops bouncing through the API.
+    if report.stage == ReportStage.done and storage.object_exists(report_id, "report.pdf"):
+        url = storage.signed_url(report_id, "report.pdf")
+        if url:
+            return RedirectResponse(url, status_code=302)
+
+    if not report.pdf_path:
         raise HTTPException(404, "PDF not ready")
-    path = Path(report.pdf_path)
-    if not path.exists():
-        # Files were wiped (typically by a Railway rebuild). Clear pdf_path so
-        # the UI stops trying to embed it; user can resume from brief.
-        report.pdf_path = None
-        session.add(report)
-        session.commit()
-        raise HTTPException(404, "PDF missing on disk")
-    return FileResponse(
-        path,
-        media_type="application/pdf",
-        filename=path.name,
-        headers={
-            # Inline so the browser embeds it instead of prompting download.
-            "Content-Disposition": f'inline; filename="{path.name}"',
-            # Cache aggressively while a report exists -- PDFs are immutable
-            # once written. Stops the iframe re-fetching every poll tick.
-            "Cache-Control": "private, max-age=3600",
-        },
-    )
+
+    # Local was set but the file's gone and R2 doesn't have it. Clear pdf_path
+    # so the UI shows 'Re-run from brief' instead of a broken iframe.
+    report.pdf_path = None
+    session.add(report)
+    session.commit()
+    raise HTTPException(404, "PDF missing on disk")
 
 
 class JobOut(BaseModel):

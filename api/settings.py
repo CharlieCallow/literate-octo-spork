@@ -46,6 +46,13 @@ class Settings(BaseSettings):
 
     reports_dir: Path = REPO_ROOT / "reports"
 
+    # M5: Cloudflare R2 storage for PDFs + chart PNGs. Optional -- when the
+    # four R2_* fields are blank we stay on the local filesystem only.
+    r2_account_id: str = ""
+    r2_bucket: str = ""
+    r2_access_key: str = ""
+    r2_secret_key: str = ""
+
     # M3: Scout daily digest scheduling + email delivery
     scout_auto_run: bool = False
     scout_daily_time: str = "07:00"  # HH:MM local time

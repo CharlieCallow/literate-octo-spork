@@ -457,6 +457,16 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
                 r.pdf_path = str(out)
                 session.add(r)
                 session.commit()
+
+        # Upload to R2 (if configured) so the artifacts survive rebuilds.
+        # Best-effort -- a failed upload doesn't fail the report; the local
+        # file is still served until the next container rebuild.
+        try:
+            from api import storage
+            storage.upload_artifacts(report.id, wd)
+        except Exception:  # noqa: BLE001
+            log.exception("R2 upload failed (non-blocking)")
+
         return _next_stage(stage)
 
     if stage == ReportStage.feedback:
