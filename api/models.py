@@ -21,6 +21,7 @@ class ReportStage(str, Enum):
     research = "research"
     charts = "charts"
     draft = "draft"
+    rebuttal = "rebuttal"  # each analyst's reaction to peer drafts -- seeds DISAGREEMENT
     redteam = "redteam"  # bear / devil's-advocate pass on the drafts
     edit = "edit"
     audit = "audit"      # ground every number in the edited prose against tool outputs

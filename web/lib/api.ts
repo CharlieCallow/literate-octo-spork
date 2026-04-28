@@ -2,7 +2,7 @@
 
 export type ReportStage =
   | "queued" | "brief" | "recruit" | "research" | "charts" | "draft"
-  | "redteam" | "edit" | "audit" | "render" | "feedback"
+  | "rebuttal" | "redteam" | "edit" | "audit" | "render" | "feedback"
   | "housekeeping" | "done" | "failed" | "cancelled";
 
 export type ReportMode = "fast" | "standard" | "deep";

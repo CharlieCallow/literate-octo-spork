@@ -7,7 +7,7 @@ const TERMINAL_STAGES = new Set(["done", "failed", "cancelled"]);
 // Workflow stage order matches state_machine.STAGE_ORDER on the backend.
 const STAGE_ORDER: ReportStage[] = [
   "queued", "brief", "recruit", "research", "charts", "draft",
-  "redteam", "edit", "audit", "render", "feedback",
+  "rebuttal", "redteam", "edit", "audit", "render", "feedback",
   "housekeeping", "done",
 ];
 

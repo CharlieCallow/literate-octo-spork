@@ -190,6 +190,9 @@ Be opinionated. This is the brief the team works from.
         sections: list[dict[str, str]],
         chart_summary: str,
         bear_note: str | None = None,
+        rebuttals: list[dict[str, str]] | None = None,
+        source_diversity: dict[str, object] | None = None,
+        coverage_gaps: list[str] | None = None,
     ) -> AgentResult:
         sec_blob = "\n\n---\n\n".join(
             f"## SECTION ({s['author']} — {s.get('role','analyst')}): {s['heading']}\n\n{s['body']}"
@@ -200,6 +203,46 @@ Be opinionated. This is the brief the team works from.
             if bear_note else
             "\n(No devil's advocate note this round.)\n"
         )
+        # Cross-analyst rebuttals: each analyst's reaction to peer drafts.
+        # Surface them so the EIC seeds the DISAGREEMENT block from primary
+        # material instead of triangulating it from the section bodies.
+        if rebuttals:
+            rebuttal_blob = "\nCROSS-ANALYST REBUTTALS (each analyst's reaction to peer drafts -- the raw material for DISAGREEMENT):\n\n" + "\n\n---\n\n".join(
+                f"**{r['author']} responds:**\n\n{r['body']}"
+                for r in rebuttals if r.get("body", "").strip()
+            ) + "\n"
+        else:
+            rebuttal_blob = ""
+        # Source diversity: if one publisher dominates the bibliography, the
+        # research is shallow. Surface the imbalance so the editor demands
+        # widening before sign-off.
+        diversity_blob = ""
+        if source_diversity:
+            top_dom = source_diversity.get("top_domain")
+            share = float(source_diversity.get("top_share") or 0.0)
+            if top_dom and share >= 0.40:
+                diversity_blob = (
+                    f"\nSOURCE-DIVERSITY FLAG: {share:.0%} of citations are from "
+                    f"`{top_dom}`. That's lazy research -- one publisher is doing "
+                    "all the work. In your edit, do not let the report ship on a "
+                    "single-source bibliography. Demand the analysts widen "
+                    "(primary data, regulators, competing publishers) or strip "
+                    "claims that rest only on the dominant domain. Call this out "
+                    "in your editorial note if it's not actionable in this round.\n"
+                )
+        # Brief-coverage gaps: questions the brief asked that the research
+        # didn't answer. The EIC should either close them in the edit or kill
+        # them rather than letting orphans through.
+        coverage_blob = ""
+        if coverage_gaps:
+            bullets = "\n".join(f"- {q}" for q in coverage_gaps)
+            coverage_blob = (
+                "\nUNANSWERED BRIEF QUESTIONS (research didn't return on these):\n\n"
+                f"{bullets}\n\n"
+                "For each: either fold an explicit closing line into the relevant "
+                "section, or strike it from the report's premise so the closing "
+                "doesn't promise an answer the body doesn't deliver.\n"
+            )
         prompt = f"""You are editing a draft Forte Research report. Your job: tighten, kill weak claims, write the opening and the bottom-line, integrate the bear case, and surface internal disagreement. PRESERVE EACH SECTION'S VOICE — homogenising into a house voice is the failure mode. The brief is below for reference, then the analyst sections, then a summary of charts, then Saoirse's bear note.
 
 BRIEF:
@@ -213,10 +256,10 @@ SECTIONS:
 CHARTS:
 
 {chart_summary}
-{bear_blob}
+{bear_blob}{rebuttal_blob}{diversity_blob}{coverage_blob}
 Conviction tags: analysts mark claims with `{{c1}}` to `{{c5}}` (1 = throwaway, 5 = high conviction). CULL `{{c1}}` and `{{c2}}` claims when you compress; keep `{{c3}}+`. The tags themselves are stripped before render — just use them as a signal for what to cut.
 
-Disagreement: if two analyst sections take directionally different positions on the same question, surface it in the DISAGREEMENT block — name both views, name who holds each, name the data point that would resolve it. Voice through difference is the goal; consensus is the failure mode. If everyone agrees, write "(none)" and the section is skipped.
+Disagreement: if two analyst sections take directionally different positions on the same question, surface it in the DISAGREEMENT block — name both views, name who holds each, name the data point that would resolve it. Voice through difference is the goal; consensus is the failure mode. If everyone agrees, write "(none)" and the section is skipped. If you have CROSS-ANALYST REBUTTALS above, mine them first — that's where the disagreement is on the record.
 
 Bear integration: take the strongest objection from Saoirse's note and put it in the BEAR CASE block — one paragraph in your voice, framed as "where we'd be wrong." Don't refute it — name it.
 
