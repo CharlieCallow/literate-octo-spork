@@ -70,6 +70,73 @@ sup.cite { font-size: 70%; vertical-align: super; line-height: 0; }
 sup.cite a { color: var(--forte-purple); text-decoration: none; padding: 0 1px; }
 sup.cite a:hover { text-decoration: underline; }
 
+/* ---- reading mode ---- */
+.reading {
+  max-width: 720px;
+  margin: 0 auto;
+  font-size: 16px;
+  line-height: 1.65;
+  color: var(--forte-ink);
+}
+.reading-cover {
+  border-bottom: 1px solid var(--forte-rule);
+  padding-bottom: 18px;
+  margin-bottom: 24px;
+}
+.reading-cover h1 {
+  font-size: 30px;
+  line-height: 1.15;
+  color: var(--forte-navy);
+  margin: 6px 0 8px;
+  font-weight: 700;
+}
+.reading-sub { font-size: 17px; color: var(--forte-muted); margin: 0 0 12px; }
+.reading-contribs { margin: 8px 0 0; font-size: 13px; }
+.reading-section { margin: 28px 0; }
+.reading-section h2 {
+  color: var(--forte-navy);
+  border-top: 1px solid var(--forte-teal);
+  padding-top: 14px;
+  margin-top: 28px;
+  font-size: 22px;
+}
+.reading-body p { margin: 0 0 12px; }
+.reading-body figure { margin: 18px 0; text-align: center; }
+.reading-body figure img { max-width: 100%; height: auto; border: 1px solid var(--forte-rule); border-radius: 4px; }
+.reading-body strong { color: var(--forte-navy); }
+.reading-body table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 14px; }
+.reading-body th { background: var(--forte-navy); color: #FFF; padding: 6px 10px; text-align: left; }
+.reading-body td { padding: 6px 10px; border-bottom: 1px solid var(--forte-rule); }
+.reading-body blockquote {
+  margin: 14px 0; padding: 6px 0 6px 14px;
+  border-left: 3px solid var(--forte-teal);
+  color: var(--forte-purple); font-style: italic;
+}
+.reading-house {
+  background: var(--forte-navy);
+  color: #FFF;
+  padding: 16px 18px;
+  border-radius: 4px;
+  margin: 18px 0;
+  font-size: 15px;
+}
+.reading-house .label { color: var(--forte-teal); font-weight: 700; margin-right: 6px; }
+.reading-sources {
+  margin-top: 32px; padding-top: 14px;
+  border-top: 1px solid var(--forte-rule);
+  font-size: 13px;
+}
+.reading-sources h2 { color: var(--forte-navy); font-size: 18px; }
+.reading-sources ol { padding-left: 22px; }
+.reading-sources li { margin: 0 0 6px; word-break: break-word; }
+.reading-sources .muted-tag { color: var(--forte-muted); font-size: 11px; }
+
+@media (max-width: 768px) {
+  .reading { font-size: 16px; }
+  .reading-cover h1 { font-size: 24px; }
+  .reading-section h2 { font-size: 20px; }
+}
+
 /* ---- mobile / narrow ---- */
 @media (max-width: 768px) {
   .layout {

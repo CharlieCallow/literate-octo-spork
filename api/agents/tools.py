@@ -297,6 +297,71 @@ def web_search_tool(max_uses: int = 5) -> dict[str, Any]:
     return {"type": "web_search_20250305", "name": "web_search", "max_uses": max_uses}
 
 
+# ---------- User-uploaded documents ----------
+
+def uploaded_documents_tool(report_id: int) -> Tool:
+    """Expose the user's uploaded research notes / spreadsheets to the analyst.
+    Without args: returns the list of available documents with a short head-of-doc
+    preview each. With `filename`: returns the full extracted text (already
+    truncated at storage time). Slice via offset/limit for very long files."""
+
+    from api import uploads as uploads_mod
+
+    def fn(
+        filename: str | None = None,
+        offset: int = 0,
+        limit: int = 30_000,
+    ) -> str:
+        docs = uploads_mod.list_documents(report_id)
+        if filename is None:
+            if not docs:
+                return json.dumps({"documents": [], "n": 0})
+            return json.dumps({
+                "n": len(docs),
+                "documents": [
+                    {
+                        "filename": d.filename,
+                        "mime": d.mime,
+                        "size_bytes": d.size_bytes,
+                        "preview": d.summary,
+                    }
+                    for d in docs
+                ],
+            })
+        for d in docs:
+            if d.filename == filename:
+                text = d.extracted_text or ""
+                slice_ = text[offset : offset + max(0, limit)]
+                return json.dumps({
+                    "filename": d.filename,
+                    "mime": d.mime,
+                    "total_chars": len(text),
+                    "offset": offset,
+                    "returned_chars": len(slice_),
+                    "text": slice_,
+                })
+        return json.dumps({"error": f"no upload named {filename}", "available": [d.filename for d in docs]})
+
+    return Tool(
+        name="uploaded_documents",
+        description=(
+            "Read research notes / CSVs / spreadsheets the user attached to "
+            "this report. Call with no args to list available documents (each "
+            "with a short preview). Pass `filename` to fetch full extracted "
+            "plaintext for one. Use offset/limit to page through long files."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "filename": {"type": "string", "description": "Document filename. Omit to list."},
+                "offset": {"type": "integer", "default": 0},
+                "limit": {"type": "integer", "default": 30000},
+            },
+        },
+        fn=fn,
+    )
+
+
 # ---------- CoinGecko (crypto) ----------
 
 def coingecko_markets_tool() -> Tool:

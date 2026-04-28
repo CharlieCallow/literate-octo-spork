@@ -382,8 +382,15 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             _make_analyst(c["slug"], cost, audit, models["analyst"])
             for c in contributors
         ]
+        from api import uploads as uploads_mod
+        has_uploads = bool(uploads_mod.list_documents(report.id))
         research_calls: list[Callable[[], AgentResult]] = [
-            (lambda a=a: a.research(brief, report.theme, wd, mode=report.mode))  # type: ignore[misc]
+            (lambda a=a: a.research(  # type: ignore[misc]
+                brief, report.theme, wd,
+                mode=report.mode,
+                report_id=report.id,
+                has_uploads=has_uploads,
+            ))
             for a in analysts
         ]
         results = _run_concurrently(research_calls)
