@@ -22,11 +22,37 @@ export interface Report {
   mode: ReportMode;
   budget_cap_usd: number | null;
   team_override: string[];
+  contributor_slugs?: string[];
   stage: ReportStage;
   error: string | null;
   cost_usd: number;
   pdf_url: string | null;
   created_at: string;
+  // Source-diversity flag, set at render time (null when not yet computed).
+  max_domain_share?: number | null;
+  top_domain?: string | null;
+}
+
+export interface PositionRow {
+  id: number;
+  report_id: number;
+  asset: string;
+  direction: "long" | "short" | "fade" | "avoid";
+  horizon_days: number;
+  target_level: number | null;
+  conviction: number;
+  contributor_slug: string;
+  claim_text: string;
+  made_at: string;
+  price_at_call: number | null;
+  evaluated_at: string | null;
+  price_at_evaluation: number | null;
+  outcome: "hit" | "miss" | "partial" | null;
+}
+
+export interface AskResponse {
+  reply: string;
+  cost_usd: number;
 }
 
 export interface TeamMember {
@@ -285,6 +311,17 @@ export const api = {
     const qs = params.toString() ? `?${params}` : "";
     return req<AuditEntry[]>(`/reports/${reportId}/audit${qs}`);
   },
+
+  // Auto-thread (5-tweet distillation, generated in housekeeping)
+  getThread: (id: number) => req<{ text: string | null }>(`/reports/${id}/thread`),
+
+  // Ask-the-analyst (chat with a contributing persona about a published report)
+  askAnalyst: (id: number, payload: { persona_slug: string; message: string; history: { role: string; content: string }[] }) =>
+    req<AskResponse>(`/reports/${id}/ask`, { method: "POST", body: JSON.stringify(payload) }),
+
+  // Position tracker
+  listOpenPositions: () => req<PositionRow[]>("/reports/positions/open"),
+  listClosedPositions: () => req<PositionRow[]>("/reports/positions/closed"),
 
   pdfUrl: (id: number) => `${API_BASE}/reports/${id}/pdf`,
   chartJsonUrl: (reportId: number, filename: string) =>

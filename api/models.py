@@ -53,6 +53,10 @@ class Report(SQLModel, table=True):
     # natural follow-ups in the daily digest.
     mentioned_tickers: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
     mentioned_themes: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    # Source-diversity check: max share of citations from any one domain.
+    # Render-time fills this in; >40% triggers a "lazy research" flag in the UI.
+    max_domain_share: float | None = None
+    top_domain: str | None = None
     stage: ReportStage = Field(default=ReportStage.queued, index=True)
     error: str | None = None
     pdf_path: str | None = None

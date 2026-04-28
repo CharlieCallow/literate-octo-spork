@@ -234,6 +234,8 @@ Return JSON-ish markdown in EXACTLY this structure (use the literal headings —
 <one short sentence — the bottom-line takeaway, navy callout at the end of the report.>
 
 # CLOSING
-<one short paragraph — what to watch, where you'll be wrong, when to revisit.>
+<two short paragraphs:
+1. What to watch — the 1-2 indicators that, if they move, change the trade.
+2. Pre-mortem. Lead with the literal phrase "When we'll know we're wrong:" followed by a falsifying condition tied to a specific date or window (e.g. "by Q3 2026", "if the Sept FOMC dot plot revises higher"). Be specific enough that future-you can decide unambiguously whether the call worked.>
 """
         return self.run(prompt, max_tokens=4096)

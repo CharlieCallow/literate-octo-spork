@@ -68,6 +68,36 @@ body { padding: 0 18mm; }
   margin: 10mm 0 0;
 }
 .cover .spacer { flex: 1; }
+.cover .positions {
+  margin-top: 8mm;
+  font-size: 9.5pt;
+}
+.cover .positions-label {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--forte-muted);
+  font-size: 8.5pt;
+  margin-bottom: 3mm;
+}
+.cover .positions table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.cover .positions th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--forte-muted);
+  border-bottom: 1px solid var(--forte-rule);
+  padding: 4pt 6pt;
+}
+.cover .positions td {
+  padding: 4pt 6pt;
+  border-bottom: 1px solid var(--forte-rule);
+}
+.cover .positions td.dir-long  { color: #1F7A3A; font-weight: 600; }
+.cover .positions td.dir-short { color: #B8860B; font-weight: 600; }
+.cover .positions td.dir-fade  { color: #B8860B; font-weight: 600; }
+.cover .positions td.dir-avoid { color: var(--forte-muted); font-weight: 600; }
 .cover .meta {
   font-size: 10pt;
   color: var(--forte-muted);
