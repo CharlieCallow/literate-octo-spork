@@ -1,7 +1,9 @@
 "use client";
 import { use, useCallback, useEffect, useState } from "react";
+import { AskAnalyst } from "@/components/AskAnalyst";
 import { AuditLog } from "@/components/AuditLog";
 import { AuthGate } from "@/components/Auth";
+import { AutoThread } from "@/components/AutoThread";
 import { EmailReportDialog } from "@/components/EmailReportDialog";
 import { InteractiveCharts } from "@/components/InteractiveCharts";
 import { ModelBreakdown } from "@/components/ModelBreakdown";
@@ -156,9 +158,33 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
             {jobs.length > 0 && <StageBreakdown jobs={jobs} />}
           </div>
 
+          {report.max_domain_share != null && report.max_domain_share > 0.4 && report.top_domain && (
+            <div className="card" style={{ borderLeft: "3px solid #B8860B" }}>
+              <div className="byline" style={{ color: "#B8860B" }}>Source-diversity warning</div>
+              <p style={{ margin: 0, fontSize: 13 }}>
+                <strong>{(report.max_domain_share * 100).toFixed(0)}%</strong> of citations came from{" "}
+                <code>{report.top_domain}</code>. Worth checking the report doesn't lean too hard on
+                one publisher.
+              </p>
+            </div>
+          )}
+
           <UploadList reportId={report.id} canEdit={report.stage !== "done"} />
 
           <InteractiveCharts reportId={report.id} />
+
+          {report.stage === "done" && (
+            <AutoThread reportId={report.id} />
+          )}
+
+          {report.stage === "done" && (
+            <AskAnalyst
+              report={report}
+              contributorSlugs={(report.contributor_slugs && report.contributor_slugs.length > 0)
+                ? report.contributor_slugs
+                : (report.team_override ?? [])}
+            />
+          )}
 
           <ModelBreakdown reportId={report.id} />
 

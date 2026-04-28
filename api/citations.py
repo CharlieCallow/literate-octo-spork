@@ -38,6 +38,44 @@ def _is_generic_homepage(url: str) -> bool:
     return parts.path.rstrip().lower() in _HOMEPAGE_PATHS and not parts.query
 
 
+def _registrable_domain(url: str) -> str | None:
+    """Return host minus a leading 'www.' so 'ft.com' and 'www.ft.com' merge.
+
+    We don't do PSL-aware eTLD+1 trimming because the citation set is small
+    and a few sub-domain false-splits are fine. The point is to catch lazy
+    research where one publisher dominates."""
+    try:
+        host = (urlsplit(url).hostname or "").lower()
+    except ValueError:
+        return None
+    if not host:
+        return None
+    return host[4:] if host.startswith("www.") else host
+
+
+def domain_distribution(sources: list[dict[str, str | None]]) -> tuple[str | None, float]:
+    """Return (top_domain, share). Empty inputs return (None, 0.0).
+
+    Used post-citation to flag reports where one publisher accounts for a
+    suspicious share of the citations -- a 'Bloomberg-only' research smell
+    the prompt won't catch."""
+    counts: dict[str, int] = {}
+    total = 0
+    for s in sources:
+        url = s.get("url") if isinstance(s, dict) else None
+        if not url:
+            continue
+        dom = _registrable_domain(url)
+        if not dom:
+            continue
+        counts[dom] = counts.get(dom, 0) + 1
+        total += 1
+    if total == 0:
+        return None, 0.0
+    top = max(counts.items(), key=lambda kv: kv[1])
+    return top[0], top[1] / total
+
+
 def _collect_urls(
     sections: Sequence[Section],
     extra_sources: Sequence[dict[str, str | None]] | None,

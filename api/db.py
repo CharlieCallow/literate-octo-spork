@@ -123,6 +123,9 @@ def _migrate_sqlite() -> None:
             # Close-the-loop: theme graph fields on the report row.
             ("reports", "ALTER TABLE reports ADD COLUMN mentioned_tickers JSON DEFAULT '[]'"),
             ("reports", "ALTER TABLE reports ADD COLUMN mentioned_themes JSON DEFAULT '[]'"),
+            # Extend-the-surface: source-diversity flag.
+            ("reports", "ALTER TABLE reports ADD COLUMN max_domain_share REAL"),
+            ("reports", "ALTER TABLE reports ADD COLUMN top_domain VARCHAR"),
         ]
         with engine.connect() as conn:
             for _table, sql in additions:
@@ -143,6 +146,8 @@ def _migrate_sqlite() -> None:
             # Close-the-loop: theme graph fields on the report row.
             "ALTER TABLE reports ADD COLUMN IF NOT EXISTS mentioned_tickers JSON DEFAULT '[]'::json",
             "ALTER TABLE reports ADD COLUMN IF NOT EXISTS mentioned_themes JSON DEFAULT '[]'::json",
+            "ALTER TABLE reports ADD COLUMN IF NOT EXISTS max_domain_share DOUBLE PRECISION",
+            "ALTER TABLE reports ADD COLUMN IF NOT EXISTS top_domain VARCHAR",
             # uploaded_documents: created_all() handles fresh deploys; this
             # CREATE-IF-NOT-EXISTS keeps the table present on existing prod
             # databases that pre-date the upload feature.

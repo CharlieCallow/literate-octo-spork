@@ -380,6 +380,15 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
 
         recruiter = Recruiter(cost, audit=audit, model=models["analyst"])
         log_lines: list[str] = []
+        # Track slugs that should end up on the report for stages downstream
+        # of recruit. Starts with the brief's standing contributors; the
+        # registry / fresh-hire branches each add their resolved slug.
+        from api import personas
+        from api import specialist_registry
+        from api.models import PersonaStatus
+        parsed_brief = parse_brief(brief)
+        resolved_slugs: list[str] = list(parsed_brief["contributor_slugs"])  # type: ignore[arg-type]
+
         for spec in specs:  # type: ignore[union-attr]
             if not isinstance(spec, dict):
                 continue
@@ -387,6 +396,22 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             request = spec.get("request", "")
             if not slug:
                 continue
+
+            # Specialist registry: if a previous report already hired a
+            # specialist for the same ground, reuse them. No fresh LLM call
+            # needed; archived personas get rehired into temp status.
+            existing = specialist_registry.find_match(request)
+            if existing is not None:
+                if existing.status == PersonaStatus.archived:
+                    personas.set_status(existing.slug, PersonaStatus.temp)
+                if existing.slug not in resolved_slugs:
+                    resolved_slugs.append(existing.slug)
+                log_lines.append(
+                    f"- `{existing.slug}`: reused from registry "
+                    f"({existing.name} — {existing.role})"
+                )
+                continue
+
             try:
                 fb = recruiter.propose_specialist(
                     slug=slug, brief_request=request, theme=report.theme,
@@ -394,16 +419,19 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             except Exception as e:  # noqa: BLE001
                 log_lines.append(f"- `{slug}`: failed -- {e}")
                 continue
-            from api import personas
-            from api.models import PersonaStatus
             personas.upsert(slug, fb.text, status=PersonaStatus.temp)
             _record(report.id, wd, fb)
+            if slug not in resolved_slugs:
+                resolved_slugs.append(slug)
             log_lines.append(f"- `{slug}`: hired ({request})")
 
-        # Refresh contributor_slugs so subsequent stages + /team see the temps.
+        # Pin the resolved slug list to team_override so registry rewrites
+        # propagate through _resolved_contributors (which would otherwise
+        # re-parse brief.md and lose them).
         with Session(engine) as session:
             r = session.get(Report, report.id)
             if r:
+                r.team_override = resolved_slugs
                 resolved = _resolved_contributors(r, brief)
                 r.contributor_slugs = [c["slug"] for c in resolved]
                 session.add(r)
@@ -548,6 +576,26 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         edited = _strip_conviction_tags(edited)
         brief = _read(wd / "brief.md")
         parsed = parse_edited(edited)
+
+        # Extract structured calls before the cover renders so they can show
+        # up in the position tracker. Idempotent: skip if this report already
+        # has rows (rerunning render after a fix shouldn't dupe positions).
+        from api import calls as calls_mod
+        if not calls_mod.has_calls_for(report.id):
+            try:
+                contributors_for_calls = _resolved_contributors(report, brief)
+                extractor = calls_mod.CallExtractor(cost, audit=audit)
+                ext_result = extractor.extract(
+                    prose=edited,
+                    contributor_slugs=[c["slug"] for c in contributors_for_calls],
+                )
+                parsed_calls = calls_mod.parse_extracted(ext_result.text)
+                slug_set = {c["slug"] for c in contributors_for_calls}
+                clean = [c for c in parsed_calls if c["contributor_slug"] in slug_set]
+                calls_mod.persist(report.id, clean)
+                _record(report.id, wd, ext_result)
+            except Exception:  # noqa: BLE001
+                log.exception("inline call extraction failed (non-blocking)")
         out = wd / "report.pdf"
         contributors_credits = [
             Contributor(EIC_DISPLAY["name"], EIC_DISPLAY["role"]),
@@ -559,11 +607,26 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             r = session.get(Report, report.id)
             subtitle = r.subtitle if r else None
 
-        from api.citations import attach_inline_citations
+        from api.citations import attach_inline_citations, domain_distribution
         raw_sections = _sections_for_render(parsed, wd)
         cited_sections, ordered_sources = attach_inline_citations(
             raw_sections, _read_sources(wd),
         )
+        top_dom, dom_share = domain_distribution(ordered_sources)
+
+        # Position-table rows for the cover page: top-conviction calls extracted
+        # for this report, capped to keep the cover from sprawling.
+        report_calls = calls_mod.calls_for_report(report.id)[:8]
+        positions_table = [
+            {
+                "asset": c.asset,
+                "direction": c.direction.value,
+                "horizon_days": c.horizon_days,
+                "target": c.target_level,
+                "conviction": c.conviction,
+            }
+            for c in report_calls
+        ]
 
         render_pdf(
             out_path=out,
@@ -576,6 +639,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             house_view_bottom=parsed.get("house_view_bottom"),
             disagreement=parsed.get("disagreement") or None,
             bear_case=parsed.get("bear_case") or None,
+            positions=positions_table or None,
             read_minutes=8,
             sources=ordered_sources,
         )
@@ -583,6 +647,8 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             r = session.get(Report, report.id)
             if r:
                 r.pdf_path = str(out)
+                r.top_domain = top_dom
+                r.max_domain_share = dom_share
                 session.add(r)
                 session.commit()
 
@@ -648,9 +714,10 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
 
     if stage == ReportStage.housekeeping:
         # Close-the-loop pass: update the rolling house view, tag the report,
-        # extract structured calls, capture voice stats. Each step is
+        # generate the auto-thread, capture voice stats. Each step is
         # best-effort -- a failure in one shouldn't prevent the others.
-        from api import calls as calls_mod
+        # (Call extraction now runs inline at render so the cover can show
+        # positions; we don't extract again here.)
         from api import house_view as house_view_mod
         from api import tagger as tagger_mod
         from api import voice_stats as voice_mod
@@ -688,26 +755,27 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             except Exception:  # noqa: BLE001
                 log.exception("theme tagging failed (non-blocking)")
 
-        # 3. Performance ledger -- structured calls (Haiku).
+        # 3. Performance ledger -- already handled inline at render time so
+        # the cover page can show positions; nothing to do here.
+
+        # 4. Auto-thread (Haiku). 5-tweet distillation of opening + bottom
+        # line. Persisted to wd/thread.md so the dashboard can show it.
         if prose.strip():
             try:
-                extractor = calls_mod.CallExtractor(cost, audit=audit)
-                ext_result = extractor.extract(
-                    prose=prose,
-                    contributor_slugs=[c["slug"] for c in contributors],
+                from api.agents.threader import Threader
+                parsed_for_thread = parse_edited(prose)
+                threader = Threader(cost, audit=audit)
+                tr = threader.thread(
+                    theme=report.theme,
+                    opening=str(parsed_for_thread.get("opening") or ""),
+                    house_view_bottom=str(parsed_for_thread.get("house_view_bottom") or ""),
                 )
-                parsed_calls = calls_mod.parse_extracted(ext_result.text)
-                # Filter to known contributors so a hallucinated slug doesn't
-                # poison the ledger.
-                slug_set = {c["slug"] for c in contributors}
-                clean = [c for c in parsed_calls if c["contributor_slug"] in slug_set]
-                n = calls_mod.persist(report.id, clean)
-                _record(report.id, wd, ext_result)
-                log.info("extracted %d calls for report %s", n, report.id)
+                _write(wd / "thread.md", tr.text)
+                _record(report.id, wd, tr)
             except Exception:  # noqa: BLE001
-                log.exception("call extraction failed (non-blocking)")
+                log.exception("auto-thread failed (non-blocking)")
 
-        # 4. Voice stats -- pure Python, per contributor's pre-edit draft.
+        # 5. Voice stats -- pure Python, per contributor's pre-edit draft.
         for c in contributors:
             try:
                 draft = _strip_heading(_read(wd / f"section-{c['slug']}.md"))

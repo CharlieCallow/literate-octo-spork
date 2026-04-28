@@ -11,6 +11,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           <a href="/inbox">Inbox</a>
           <a href="/new">New report</a>
           <a href="/archive">Archive</a>
+          <a href="/positions">Positions</a>
           <a href="/team">Team</a>
           <a href="/settings">Settings</a>
         </nav>

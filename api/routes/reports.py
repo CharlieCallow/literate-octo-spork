@@ -34,10 +34,13 @@ class ReportOut(BaseModel):
     mode: ReportMode
     budget_cap_usd: float | None
     team_override: list[str]
+    contributor_slugs: list[str]
     stage: ReportStage
     error: str | None
     cost_usd: float
     pdf_url: str | None
+    max_domain_share: float | None
+    top_domain: str | None
     created_at: datetime
 
     @classmethod
@@ -53,10 +56,13 @@ class ReportOut(BaseModel):
             mode=r.mode,
             budget_cap_usd=r.budget_cap_usd,
             team_override=list(r.team_override or []),
+            contributor_slugs=list(r.contributor_slugs or []),
             stage=r.stage,
             error=r.error,
             cost_usd=r.cost_usd,
             pdf_url=f"/reports/{r.id}/pdf" if r.pdf_path else None,
+            max_domain_share=r.max_domain_share,
+            top_domain=r.top_domain,
             created_at=created_at,
         )
 
@@ -810,6 +816,139 @@ def _serve_chart_image(report_id: int, filename: str, session: Session):  # type
         if url:
             return RedirectResponse(url, status_code=302)
     raise HTTPException(404, "Chart not found")
+
+
+# ----- Auto-thread (5-tweet distillation persisted by housekeeping) -----
+
+class ThreadOut(BaseModel):
+    text: str | None  # None when housekeeping hasn't run / failed
+
+
+@router.get("/{report_id}/thread", response_model=ThreadOut, dependencies=[Depends(require_auth)])
+def get_thread(report_id: int, session: Session = Depends(get_session)) -> ThreadOut:
+    if session.get(Report, report_id) is None:
+        raise HTTPException(404, "Report not found")
+    from api.workflow.state_machine import working_dir
+    p = working_dir(report_id) / "thread.md"
+    if not p.exists():
+        return ThreadOut(text=None)
+    return ThreadOut(text=p.read_text(encoding="utf-8"))
+
+
+# ----- Ask-the-analyst (post-publish chat with a contributing persona) -----
+
+class AskRequest(BaseModel):
+    persona_slug: str
+    message: str
+    history: list[dict[str, str]] = []  # [{role: "user"|"assistant", content: ...}]
+
+
+class AskResponse(BaseModel):
+    reply: str
+    cost_usd: float
+
+
+@router.post("/{report_id}/ask", response_model=AskResponse, dependencies=[Depends(require_auth)])
+def ask_analyst(
+    report_id: int,
+    payload: AskRequest,
+    session: Session = Depends(get_session),
+) -> AskResponse:
+    """Chat with a contributing persona about a published report. The persona
+    file is the system prompt; the report markdown is loaded as context."""
+    from api import app_settings
+    from api.agents.conversation import Conversation
+    from api.agents.cost import CostTracker
+    from api.workflow.state_machine import _persona_path, working_dir
+
+    report = session.get(Report, report_id)
+    if not report:
+        raise HTTPException(404, "Report not found")
+    if report.stage != ReportStage.done:
+        raise HTTPException(400, "Report isn't published yet")
+
+    persona_path = _persona_path(payload.persona_slug)
+    if persona_path is None:
+        raise HTTPException(404, f"Unknown persona: {payload.persona_slug}")
+
+    # Use the audited prose if present (it's what the reader saw), fall back
+    # to edited.md, fall back to a tiny note about the report theme.
+    wd = working_dir(report_id)
+    body = ""
+    for fn in ("audited.md", "edited.md"):
+        p = wd / fn
+        if p.exists() and p.read_text(encoding="utf-8").strip():
+            body = p.read_text(encoding="utf-8")
+            break
+    if not body:
+        body = f"(report body not available locally; theme: {report.theme})"
+
+    cost = CostTracker(
+        report_cap=app_settings.cost_per_report_usd(),
+        day_cap=app_settings.cost_per_day_usd(),
+    )
+    conv = Conversation(persona_path=persona_path, cost=cost)
+    result = conv.reply(
+        report_theme=report.theme,
+        report_markdown=body,
+        history=payload.history,
+        user_message=payload.message,
+    )
+    return AskResponse(reply=result.text, cost_usd=result.cost_usd)
+
+
+# ----- Position tracker (current open + closed across all reports) -----
+
+class PositionRow(BaseModel):
+    id: int
+    report_id: int
+    asset: str
+    direction: str
+    horizon_days: int
+    target_level: float | None
+    conviction: int
+    contributor_slug: str
+    claim_text: str
+    made_at: datetime
+    price_at_call: float | None
+    evaluated_at: datetime | None
+    price_at_evaluation: float | None
+    outcome: str | None
+
+
+@router.get("/positions/open", response_model=list[PositionRow], dependencies=[Depends(require_auth)])
+def list_open_positions() -> list[PositionRow]:
+    """Calls that haven't matured yet -- the firm's current stance."""
+    from api import calls as calls_mod
+    rows = calls_mod.open_positions()
+    return [_to_position_row(r) for r in rows]
+
+
+@router.get("/positions/closed", response_model=list[PositionRow], dependencies=[Depends(require_auth)])
+def list_closed_positions() -> list[PositionRow]:
+    """Resolved calls, most-recent first."""
+    from api import calls as calls_mod
+    rows = calls_mod.graded_history()
+    return [_to_position_row(r) for r in rows]
+
+
+def _to_position_row(c) -> "PositionRow":  # type: ignore[no-untyped-def]
+    return PositionRow(
+        id=c.id or 0,
+        report_id=c.report_id,
+        asset=c.asset,
+        direction=c.direction.value if hasattr(c.direction, "value") else str(c.direction),
+        horizon_days=c.horizon_days,
+        target_level=c.target_level,
+        conviction=c.conviction,
+        contributor_slug=c.contributor_slug,
+        claim_text=c.claim_text,
+        made_at=c.made_at,
+        price_at_call=c.price_at_call,
+        evaluated_at=c.evaluated_at,
+        price_at_evaluation=c.price_at_evaluation,
+        outcome=c.outcome.value if c.outcome and hasattr(c.outcome, "value") else None,
+    )
 
 
 # ----- Email a finished report -----

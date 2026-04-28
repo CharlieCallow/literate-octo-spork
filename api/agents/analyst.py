@@ -155,5 +155,7 @@ YOUR NOTES:
 Output a single section in markdown. Start with a brief inline header (## <Section heading>). 200-400 words. Reference charts inline as `[chart: <filename>]` if you want one rendered (Data & Charts will produce them). Cite real sources inline using markdown links `[anchor text](https://url)` -- the renderer turns these into numbered footnotes. Do not invent data or URLs -- only use figures and links from your notes.
 
 Conviction tags. After every substantive opinion or directional claim (not boring facts), append a conviction tag in curly braces: `{{c1}}` (throwaway, weak signal), `{{c2}}` (low — could be wrong), `{{c3}}` (base case — fine), `{{c4}}` (high — happy to defend), `{{c5}}` (table-pounding). The Editor uses these to decide what to cut, then strips them before render. If you can't honestly tag a claim `{{c3}}+`, you probably shouldn't be making it.
+
+Forecast horizons. Every future-tense claim must include an explicit horizon -- a date or a window. "Rates fall" is not a forecast; "10Y back to 3.75% by Q3 2026" is. Acceptable formats: "by Q3 2026", "within 6 months", "by year-end", "in the next two FOMCs". The performance ledger graders compare your call against the tape on that horizon -- if you don't tag one, the call is unreviewable and the EIC will cull it. Past-tense observations don't need horizons.
 """
         return self.run(prompt, max_tokens=2048)

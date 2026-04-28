@@ -272,3 +272,42 @@ def last_evaluation_at() -> datetime | None:
         ).all()
     times = [r.evaluated_at for r in rows if r.evaluated_at]
     return max(times) if times else None
+
+
+def calls_for_report(report_id: int) -> list[Call]:
+    with Session(engine) as session:
+        return list(session.exec(
+            select(Call).where(Call.report_id == report_id)
+            .order_by(Call.conviction.desc(), Call.id.asc())  # type: ignore[attr-defined]
+        ).all())
+
+
+def has_calls_for(report_id: int) -> bool:
+    with Session(engine) as session:
+        return session.exec(
+            select(Call).where(Call.report_id == report_id).limit(1)
+        ).first() is not None
+
+
+def open_positions(limit: int = 100) -> list[Call]:
+    """Calls that haven't matured yet (made_at + horizon_days > now and no
+    evaluation written). The /positions page surfaces these as the firm's
+    current stance."""
+    with Session(engine) as session:
+        rows = session.exec(
+            select(Call).where(Call.evaluated_at.is_(None))  # type: ignore[union-attr]
+            .order_by(Call.made_at.desc())  # type: ignore[attr-defined]
+            .limit(limit)
+        ).all()
+    return list(rows)
+
+
+def graded_history(limit: int = 200) -> list[Call]:
+    """Resolved calls, most-recent first. Used by /positions page closed tab."""
+    with Session(engine) as session:
+        rows = session.exec(
+            select(Call).where(Call.evaluated_at.is_not(None))  # type: ignore[union-attr]
+            .order_by(Call.evaluated_at.desc())  # type: ignore[attr-defined]
+            .limit(limit)
+        ).all()
+    return list(rows)
