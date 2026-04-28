@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AuthGate } from "@/components/Auth";
 import { api, MODE_ESTIMATES, type ReportMode, type TeamMember } from "@/lib/api";
 
@@ -20,6 +20,11 @@ export default function NewReportPage() {
   const [budgetText, setBudgetText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Files queued client-side; we don't have a report id until commission, so
+  // upload happens as a follow-up step right after createReport.
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     api.listTeam().then(setTeam).catch(() => { /* ignore — auth-gated */ });
@@ -58,6 +63,19 @@ export default function NewReportPage() {
         team_override: pickedSlugs,
         budget_cap_usd,
       });
+      // Upload any attached docs before nav so the research stage sees them.
+      // Workers poll on a few-second interval, so a quick sequence here is fine.
+      for (const f of pendingFiles) {
+        setUploadStatus(`Uploading ${f.name}…`);
+        try {
+          await api.uploadDocument(r.id, f);
+        } catch (e) {
+          // Don't block navigation if one file fails -- the report can still
+          // run. Surface the error so the user can re-upload from the report
+          // page if it matters.
+          setUploadStatus(`Upload failed for ${f.name}: ${e}`);
+        }
+      }
       window.location.href = `/reports/${r.id}`;
     } catch (e) {
       setError(String(e));
@@ -116,6 +134,41 @@ export default function NewReportPage() {
             </div>
           </div>
         )}
+
+        <div style={{ marginBottom: 16 }}>
+          <label className="byline">Attach research notes / spreadsheets (optional)</label>
+          <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+            PDFs, CSVs, XLSX, Markdown. The team treats these as primary sources.
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept=".pdf,.csv,.tsv,.xlsx,.xlsm,.md,.markdown,.txt"
+            onChange={(e) => {
+              const files = Array.from(e.target.files || []);
+              setPendingFiles((cur) => [...cur, ...files]);
+              if (fileInputRef.current) fileInputRef.current.value = "";
+            }}
+            style={{ padding: 6 }}
+          />
+          {pendingFiles.length > 0 && (
+            <ul style={{ marginTop: 8, paddingLeft: 18, fontSize: 13 }}>
+              {pendingFiles.map((f, i) => (
+                <li key={i} style={{ marginBottom: 2 }}>
+                  {f.name} <span className="muted">({(f.size / 1024).toFixed(1)} KB)</span>
+                  <button
+                    onClick={() => setPendingFiles((cur) => cur.filter((_, idx) => idx !== i))}
+                    style={{ marginLeft: 8, padding: "1px 8px", fontSize: 11, background: "#FFF", color: "var(--forte-ink)", border: "1px solid var(--forte-rule)" }}
+                  >
+                    remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {uploadStatus && <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>{uploadStatus}</p>}
+        </div>
 
         <div style={{ marginBottom: 16 }}>
           <label className="byline">Budget cap override (USD, optional)</label>

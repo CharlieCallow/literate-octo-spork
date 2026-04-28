@@ -1,11 +1,15 @@
 "use client";
-import { memo, use, useEffect, useState } from "react";
+import { memo, use, useCallback, useEffect, useState } from "react";
 import { AuditLog } from "@/components/AuditLog";
 import { AuthGate } from "@/components/Auth";
+import { EmailReportDialog } from "@/components/EmailReportDialog";
 import { InteractiveCharts } from "@/components/InteractiveCharts";
+import { ModelBreakdown } from "@/components/ModelBreakdown";
+import { ReadingView } from "@/components/ReadingView";
 import { RunStatus } from "@/components/RunStatus";
 import { ShareDialog } from "@/components/ShareDialog";
 import { StageBreakdown } from "@/components/StageBreakdown";
+import { UploadList } from "@/components/UploadList";
 import { api, type Job, type Report, type ReportStage } from "@/lib/api";
 
 const TERMINAL_STAGES = new Set(["done", "failed", "cancelled"]);
@@ -22,6 +26,11 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
   const [jobs, setJobs] = useState<Job[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
+  // Default to reading mode -- nicer on mobile and a much faster first paint
+  // than the embedded PDF iframe. Toggle restores the original PDF view.
+  const [view, setView] = useState<"reading" | "pdf">("reading");
+  const readingLoader = useCallback(() => api.getReading(reportId), [reportId]);
 
   useEffect(() => {
     let alive = true;
@@ -84,12 +93,20 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
 
             <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
               {report.stage === "done" && (
-                <button
-                  onClick={() => setShareOpen(true)}
-                  style={{ padding: "3px 12px", fontSize: 12 }}
-                >
-                  Share
-                </button>
+                <>
+                  <button
+                    onClick={() => setShareOpen(true)}
+                    style={{ padding: "3px 12px", fontSize: 12 }}
+                  >
+                    Share link
+                  </button>
+                  <button
+                    onClick={() => setEmailOpen(true)}
+                    style={{ padding: "3px 12px", fontSize: 12, background: "#FFF", color: "var(--forte-ink)", border: "1px solid var(--forte-rule)" }}
+                  >
+                    Email
+                  </button>
+                </>
               )}
               {!TERMINAL_STAGES.has(report.stage) && (
                 <button onClick={cancel} style={{ padding: "3px 12px", fontSize: 12, background: "#FFF", color: "var(--forte-ink)", border: "1px solid var(--forte-rule)" }}>
@@ -142,14 +159,50 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
             {jobs.length > 0 && <StageBreakdown jobs={jobs} />}
           </div>
 
+          <UploadList reportId={report.id} canEdit={report.stage !== "done"} />
+
           <InteractiveCharts reportId={report.id} />
+
+          <ModelBreakdown reportId={report.id} />
 
           <AuditLog reportId={report.id} />
 
           {report.pdf_url ? (
             <div className="card">
-              <div className="byline">PDF</div>
-              <PdfFrame reportId={report.id} />
+              <div className="byline" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span>{view === "reading" ? "Reading mode" : "PDF"}</span>
+                <span style={{ display: "inline-flex", gap: 6 }}>
+                  <button
+                    onClick={() => setView("reading")}
+                    style={{
+                      padding: "2px 10px", fontSize: 11,
+                      background: view === "reading" ? "var(--forte-navy)" : "#FFF",
+                      color: view === "reading" ? "#FFF" : "var(--forte-ink)",
+                      border: "1px solid var(--forte-rule)",
+                    }}
+                  >
+                    Reading
+                  </button>
+                  <button
+                    onClick={() => setView("pdf")}
+                    style={{
+                      padding: "2px 10px", fontSize: 11,
+                      background: view === "pdf" ? "var(--forte-navy)" : "#FFF",
+                      color: view === "pdf" ? "#FFF" : "var(--forte-ink)",
+                      border: "1px solid var(--forte-rule)",
+                    }}
+                  >
+                    PDF
+                  </button>
+                </span>
+              </div>
+              {view === "reading" ? (
+                <div style={{ marginTop: 12 }}>
+                  <ReadingView loader={readingLoader} />
+                </div>
+              ) : (
+                <PdfFrame reportId={report.id} />
+              )}
               <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
                 <a href={api.pdfUrl(report.id)}>Download PDF</a>
               </p>
@@ -180,6 +233,7 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
         </>
       )}
       {shareOpen && report && <ShareDialog reportId={report.id} onClose={() => setShareOpen(false)} />}
+      {emailOpen && report && <EmailReportDialog reportId={report.id} onClose={() => setEmailOpen(false)} />}
     </AuthGate>
   );
 }

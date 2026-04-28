@@ -164,6 +164,23 @@ class AppSetting(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=_now)
 
 
+class UploadedDocument(SQLModel, table=True):
+    """User-supplied research notes / CSVs the agents can read as a tool result.
+    `extracted_text` is the plaintext rendering used by the agent tool; the
+    original file lives on disk under reports/<report_id>/uploads/."""
+
+    __tablename__ = "uploaded_documents"
+
+    id: int | None = Field(default=None, primary_key=True)
+    report_id: int = Field(foreign_key="reports.id", index=True)
+    filename: str
+    mime: str
+    size_bytes: int = 0
+    summary: str = ""           # short head-of-doc snippet for the listing tool
+    extracted_text: str = ""    # full extracted plaintext (chunked on read)
+    created_at: datetime = Field(default_factory=_now)
+
+
 class Persona(SQLModel, table=True):
     """Source of truth for persona files. The filesystem is a write-through
     cache rehydrated from these rows at startup so Railway rebuilds don't

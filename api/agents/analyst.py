@@ -20,6 +20,7 @@ from api.agents.tools import (
     github_search_tool,
     openfda_labels_tool,
     openfda_recalls_tool,
+    uploaded_documents_tool,
     web_search_tool,
     wikipedia_tool,
     worldbank_tool,
@@ -52,14 +53,23 @@ class Analyst(Agent):
         working_dir: Path,
         *,
         mode: ReportMode = ReportMode.standard,
+        report_id: int | None = None,
+        has_uploads: bool = False,
     ) -> AgentResult:
+        upload_note = (
+            "\n\nThe user attached research notes / CSVs to this report. "
+            "Call `uploaded_documents` with no args first to see what's there, "
+            "then pass `filename` to read each one. Treat these as primary "
+            "sources -- they reflect the user's own thinking and data.\n"
+            if has_uploads else ""
+        )
         prompt = f"""You're a contributing analyst on a Forte Research report. The Editor-in-Chief's brief is below.
 
 BRIEF:
 
 {brief}
 
-THEME: {theme}
+THEME: {theme}{upload_note}
 
 Run your research. Available tools:
 
@@ -107,6 +117,8 @@ Use whichever tools fit your beat. Stay in your voice. Write structured notes in
             openfda_recalls_tool(),
             defillama_tool(),
         ]
+        if has_uploads and report_id is not None:
+            tools.append(uploaded_documents_tool(report_id))
         # Per-mode tuning. fast: drop web search (biggest cost driver) and
         # tighten loop. deep: bigger token + iter budget for thorough research.
         server_tools = [] if mode == ReportMode.fast else [web_search_tool()]

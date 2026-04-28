@@ -137,6 +137,22 @@ def _migrate_sqlite() -> None:
             "ALTER TABLE reports ADD COLUMN IF NOT EXISTS share_token VARCHAR",
             "ALTER TABLE reports ADD COLUMN IF NOT EXISTS shared_at TIMESTAMP",
             "CREATE INDEX IF NOT EXISTS ix_reports_share_token ON reports (share_token)",
+            # uploaded_documents: created_all() handles fresh deploys; this
+            # CREATE-IF-NOT-EXISTS keeps the table present on existing prod
+            # databases that pre-date the upload feature.
+            """
+            CREATE TABLE IF NOT EXISTS uploaded_documents (
+              id SERIAL PRIMARY KEY,
+              report_id INTEGER NOT NULL REFERENCES reports(id),
+              filename VARCHAR NOT NULL,
+              mime VARCHAR NOT NULL,
+              size_bytes INTEGER NOT NULL DEFAULT 0,
+              summary TEXT NOT NULL DEFAULT '',
+              extracted_text TEXT NOT NULL DEFAULT '',
+              created_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_uploaded_documents_report_id ON uploaded_documents (report_id)",
         ]
         with engine.connect() as conn:
             for sql in pg_additions:

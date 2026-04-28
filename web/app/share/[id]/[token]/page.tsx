@@ -64,6 +64,20 @@ export default function SharePage({ params }: { params: Promise<{ id: string; to
         </p>
       )}
 
+      <div className="card" style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <a
+          href={`/share/${reportId}/${token}/read`}
+          style={{
+            display: "inline-block", padding: "8px 16px",
+            background: "var(--forte-navy)", color: "#FFF", borderRadius: 4,
+            textDecoration: "none", fontSize: 14, fontWeight: 600,
+          }}
+        >
+          Reading mode
+        </a>
+        <span className="muted" style={{ fontSize: 13 }}>web-styled view, easier on mobile</span>
+      </div>
+
       {report.has_pdf ? (
         <div className="card">
           <div className="byline">PDF</div>

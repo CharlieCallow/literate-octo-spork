@@ -6,15 +6,15 @@ import secrets
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from api import storage
+from api import storage, uploads
 from api.auth import require_auth
 from api.db import get_session
-from api.models import AuditLog, Job, Report, ReportMode, ReportStage
+from api.models import AuditLog, Job, Report, ReportMode, ReportStage, UploadedDocument
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -532,3 +532,369 @@ def cancel(report_id: int, session: Session = Depends(get_session)) -> ReportOut
     session.commit()
     session.refresh(report)
     return ReportOut.from_db(report)
+
+
+# ----- Uploaded research notes / spreadsheets -----
+
+ALLOWED_UPLOAD_SUFFIXES = {".pdf", ".csv", ".tsv", ".xlsx", ".xlsm", ".md", ".markdown", ".txt"}
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10MB; bigger and the agent's context budget won't hold it
+
+
+class UploadedDocOut(BaseModel):
+    id: int
+    report_id: int
+    filename: str
+    mime: str
+    size_bytes: int
+    summary: str
+    created_at: datetime
+
+    @classmethod
+    def from_db(cls, d: UploadedDocument) -> UploadedDocOut:
+        created_at = d.created_at if d.created_at.tzinfo else d.created_at.replace(tzinfo=UTC)
+        return cls(
+            id=d.id or 0,
+            report_id=d.report_id,
+            filename=d.filename,
+            mime=d.mime,
+            size_bytes=d.size_bytes,
+            summary=d.summary,
+            created_at=created_at,
+        )
+
+
+@router.get(
+    "/{report_id}/uploads",
+    response_model=list[UploadedDocOut],
+    dependencies=[Depends(require_auth)],
+)
+def list_uploads(report_id: int, session: Session = Depends(get_session)) -> list[UploadedDocOut]:
+    if not session.get(Report, report_id):
+        raise HTTPException(404, "Report not found")
+    return [UploadedDocOut.from_db(d) for d in uploads.list_documents(report_id)]
+
+
+@router.post(
+    "/{report_id}/uploads",
+    response_model=UploadedDocOut,
+    dependencies=[Depends(require_auth)],
+)
+async def upload_document(
+    report_id: int,
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+) -> UploadedDocOut:
+    """Attach a research note or CSV to a report. The file is text-extracted at
+    upload time; the analyst agents see it via the `uploaded_documents` tool."""
+    if not session.get(Report, report_id):
+        raise HTTPException(404, "Report not found")
+
+    filename = (file.filename or "upload.bin").replace("/", "_").replace("\\", "_")
+    suffix = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if suffix not in ALLOWED_UPLOAD_SUFFIXES:
+        raise HTTPException(400, f"File type not supported: {suffix or '(none)'}. Allowed: {sorted(ALLOWED_UPLOAD_SUFFIXES)}")
+
+    data = await file.read()
+    if len(data) == 0:
+        raise HTTPException(400, "Empty upload")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(400, f"File too large ({len(data)} bytes; max {MAX_UPLOAD_BYTES})")
+
+    mime = file.content_type or "application/octet-stream"
+    doc = uploads.save_upload(report_id, filename, mime, data)
+    return UploadedDocOut.from_db(doc)
+
+
+@router.delete(
+    "/{report_id}/uploads/{filename}",
+    dependencies=[Depends(require_auth)],
+)
+def remove_upload(
+    report_id: int,
+    filename: str,
+    session: Session = Depends(get_session),
+) -> dict[str, bool]:
+    if not session.get(Report, report_id):
+        raise HTTPException(404, "Report not found")
+    ok = uploads.delete_document(report_id, filename)
+    if not ok:
+        raise HTTPException(404, "Upload not found")
+    return {"deleted": True}
+
+
+# ----- Reading mode: HTML rendering of the report content -----
+
+class ReadingSection(BaseModel):
+    heading: str
+    body_html: str
+    author: str | None = None
+    role: str | None = None
+
+
+class ReadingSource(BaseModel):
+    n: int
+    url: str
+    title: str | None
+    source: str
+
+
+class ReadingMode(BaseModel):
+    """Structured representation of a finished report for the web reader.
+    Sections are pre-rendered to HTML (markdown-it + inline citations + chart
+    `<figure>` blocks rewritten to API URLs the browser can hit)."""
+    id: int
+    theme: str
+    subtitle: str | None
+    contributors: list[dict[str, str]]
+    house_view_top: str | None
+    house_view_bottom: str | None
+    sections: list[ReadingSection]
+    sources: list[ReadingSource]
+    created_at: datetime
+
+
+def _build_reading_payload(report: Report, *, public_token: str | None = None) -> ReadingMode:
+    """Reconstruct the report from its working-dir files. Used by both the
+    auth-gated reading endpoint and the public share variant."""
+    if report.id is None:
+        raise HTTPException(500, "Report has no id")
+    if report.stage != ReportStage.done:
+        raise HTTPException(400, f"Report is not finished (stage={report.stage})")
+
+    import re as _re
+
+    from markdown_it import MarkdownIt
+
+    from api.citations import attach_inline_citations
+    from api.workflow.state_machine import (
+        DC_DISPLAY,
+        EIC_DISPLAY,
+        _read_sources,
+        _resolved_contributors,
+        _sections_for_render,
+        parse_edited,
+        working_dir,
+    )
+
+    wd = working_dir(report.id)
+    edited_path = wd / "edited.md"
+    brief_path = wd / "brief.md"
+    if not edited_path.exists():
+        raise HTTPException(404, "Report content not on disk (working dir was wiped)")
+
+    edited = edited_path.read_text(encoding="utf-8")
+    brief = brief_path.read_text(encoding="utf-8") if brief_path.exists() else ""
+    parsed = parse_edited(edited)
+
+    raw_sections = _sections_for_render(parsed, wd)
+    cited_sections, ordered_sources = attach_inline_citations(
+        raw_sections, _read_sources(wd), check_urls=False,  # already filtered at PDF render time
+    )
+
+    # Rewrite `<figure><img src="file://...charts/foo.png">` references so the
+    # browser can fetch the chart through the API (or share endpoint) instead.
+    if public_token is not None:
+        chart_url_base = f"/reports/{report.id}/share/{public_token}/chart-image"
+    else:
+        chart_url_base = f"/reports/{report.id}/chart-image"
+
+    md = MarkdownIt("commonmark", {"html": True}).enable("table")
+    file_uri_re = _re.compile(r'src="file://[^"]*?/charts/([^"]+)"')
+
+    def render_body(body_md: str) -> str:
+        rewritten = file_uri_re.sub(
+            lambda m: f'src="{chart_url_base}?filename={m.group(1)}"',
+            body_md,
+        )
+        return md.render(rewritten)
+
+    sections = [
+        ReadingSection(
+            heading=s.heading,
+            body_html=render_body(s.body_md),
+            author=s.author,
+            role=s.role,
+        )
+        for s in cited_sections
+    ]
+
+    contributors = [
+        {"name": EIC_DISPLAY["name"], "role": EIC_DISPLAY["role"]},
+        *[{"name": c["name"], "role": c["role"]} for c in _resolved_contributors(report, brief)],
+        {"name": DC_DISPLAY["name"], "role": DC_DISPLAY["role"]},
+    ]
+
+    created_at = report.created_at if report.created_at.tzinfo else report.created_at.replace(tzinfo=UTC)
+    return ReadingMode(
+        id=report.id,
+        theme=report.theme,
+        subtitle=report.subtitle,
+        contributors=contributors,
+        house_view_top=str(parsed.get("house_view_top") or "") or None,
+        house_view_bottom=str(parsed.get("house_view_bottom") or "") or None,
+        sections=sections,
+        sources=[
+            ReadingSource(
+                n=int(s["n"] or "0"),
+                url=str(s["url"] or ""),
+                title=s["title"],
+                source=str(s["source"] or "web"),
+            )
+            for s in ordered_sources
+        ],
+        created_at=created_at,
+    )
+
+
+@router.get("/{report_id}/reading", response_model=ReadingMode, dependencies=[Depends(require_auth)])
+def get_reading(report_id: int, session: Session = Depends(get_session)) -> ReadingMode:
+    """HTML-rendered version of the report -- alternative to the embedded PDF
+    that's much nicer on mobile."""
+    report = session.get(Report, report_id)
+    if not report:
+        raise HTTPException(404, "Report not found")
+    return _build_reading_payload(report)
+
+
+@router.get("/{report_id}/share/{token}/reading", response_model=ReadingMode)
+def get_public_reading(
+    report_id: int,
+    token: str,
+    session: Session = Depends(get_session),
+) -> ReadingMode:
+    report = _load_shared_report(report_id, token, session)
+    return _build_reading_payload(report, public_token=token)
+
+
+@router.get("/{report_id}/chart-image", dependencies=[Depends(require_auth)])
+def get_chart_image(report_id: int, filename: str, session: Session = Depends(get_session)):  # type: ignore[no-untyped-def]
+    """Serve a chart PNG by filename. Used by reading mode's <img> tags."""
+    return _serve_chart_image(report_id, filename, session)
+
+
+@router.get("/{report_id}/share/{token}/chart-image")
+def get_public_chart_image(report_id: int, token: str, filename: str, session: Session = Depends(get_session)):  # type: ignore[no-untyped-def]
+    _load_shared_report(report_id, token, session)
+    return _serve_chart_image(report_id, filename, session)
+
+
+def _serve_chart_image(report_id: int, filename: str, session: Session):  # type: ignore[no-untyped-def]
+    if session.get(Report, report_id) is None:
+        raise HTTPException(404, "Report not found")
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(400, "Invalid filename")
+    from api.workflow.state_machine import working_dir
+    wd = working_dir(report_id)
+    local = wd / "charts" / filename
+    if local.exists():
+        return FileResponse(local, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
+    if storage.object_exists(report_id, "charts", filename):
+        url = storage.signed_url(report_id, "charts", filename)
+        if url:
+            return RedirectResponse(url, status_code=302)
+    raise HTTPException(404, "Chart not found")
+
+
+# ----- Email a finished report -----
+
+class EmailReportRequest(BaseModel):
+    to: str
+    note: str = ""            # optional cover note from the sender
+    include_pdf: bool = True  # attach the PDF (when generated + small enough)
+
+
+class EmailReportResponse(BaseModel):
+    sent: bool
+    detail: str = ""
+
+
+@router.post(
+    "/{report_id}/email",
+    response_model=EmailReportResponse,
+    dependencies=[Depends(require_auth)],
+)
+def email_report(
+    report_id: int,
+    payload: EmailReportRequest,
+    session: Session = Depends(get_session),
+) -> EmailReportResponse:
+    """Send the report to a recipient. Mints a public share token if there
+    isn't one already so the email links don't require dashboard auth."""
+    report = session.get(Report, report_id)
+    if not report:
+        raise HTTPException(404, "Report not found")
+    if report.stage != ReportStage.done:
+        raise HTTPException(400, f"Report is not finished (stage={report.stage})")
+
+    if not report.share_token:
+        report.share_token = secrets.token_urlsafe(32)
+        report.shared_at = datetime.now(UTC)
+        session.add(report)
+        session.commit()
+        session.refresh(report)
+
+    pdf_bytes: bytes | None = None
+    if payload.include_pdf and report.pdf_path:
+        try:
+            data = Path(report.pdf_path).read_bytes()
+            if len(data) <= 25 * 1024 * 1024:  # Resend caps attachments around 40MB; stay safe
+                pdf_bytes = data
+        except OSError:
+            pdf_bytes = None
+
+    from api.email import send_report
+
+    ok, detail = send_report(
+        to=payload.to,
+        report=report,
+        share_token=report.share_token or "",
+        cover_note=payload.note,
+        pdf_bytes=pdf_bytes,
+    )
+    return EmailReportResponse(sent=ok, detail=detail)
+
+
+# ----- Model breakdown -----
+
+class ModelBreakdownRow(BaseModel):
+    model: str
+    calls: int
+    input_tokens: int
+    output_tokens: int
+    cost_usd: float
+
+
+@router.get(
+    "/{report_id}/model_breakdown",
+    response_model=list[ModelBreakdownRow],
+    dependencies=[Depends(require_auth)],
+)
+def model_breakdown(report_id: int, session: Session = Depends(get_session)) -> list[ModelBreakdownRow]:
+    """Aggregate per-model token usage + cost for one report. Reads from the
+    audit log (every model_call event carries model + token counts + cost)."""
+    if not session.get(Report, report_id):
+        raise HTTPException(404, "Report not found")
+    rows = session.exec(
+        select(AuditLog)
+        .where(AuditLog.report_id == report_id)
+        .where(AuditLog.event == "model_call")
+    ).all()
+    bucket: dict[str, dict[str, float]] = {}
+    for r in rows:
+        details = dict(r.details or {})
+        model = str(details.get("model") or "unknown")
+        b = bucket.setdefault(model, {"calls": 0.0, "input": 0.0, "output": 0.0, "cost": 0.0})
+        b["calls"] += 1
+        b["input"] += float(details.get("input_tokens") or 0)
+        b["output"] += float(details.get("output_tokens") or 0)
+        b["cost"] += float(r.cost_usd or 0.0)
+    return [
+        ModelBreakdownRow(
+            model=m,
+            calls=int(b["calls"]),
+            input_tokens=int(b["input"]),
+            output_tokens=int(b["output"]),
+            cost_usd=round(b["cost"], 4),
+        )
+        for m, b in sorted(bucket.items(), key=lambda kv: -kv[1]["cost"])
+    ]

@@ -183,6 +183,55 @@ export interface PublicReport {
   has_pdf: boolean;
 }
 
+export interface UploadedDoc {
+  id: number;
+  report_id: number;
+  filename: string;
+  mime: string;
+  size_bytes: number;
+  summary: string;
+  created_at: string;
+}
+
+export interface ReadingSection {
+  heading: string;
+  body_html: string;
+  author: string | null;
+  role: string | null;
+}
+
+export interface ReadingSource {
+  n: number;
+  url: string;
+  title: string | null;
+  source: string;
+}
+
+export interface ReadingMode {
+  id: number;
+  theme: string;
+  subtitle: string | null;
+  contributors: { name: string; role: string }[];
+  house_view_top: string | null;
+  house_view_bottom: string | null;
+  sections: ReadingSection[];
+  sources: ReadingSource[];
+  created_at: string;
+}
+
+export interface ModelBreakdownRow {
+  model: string;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+}
+
+export interface EmailReportResponse {
+  sent: boolean;
+  detail: string;
+}
+
 export const api = {
   listReports: () => req<Report[]>("/reports"),
   getReport: (id: number) => req<Report>(`/reports/${id}`),
@@ -239,6 +288,46 @@ export const api = {
   pdfUrl: (id: number) => `${API_BASE}/reports/${id}/pdf`,
   chartJsonUrl: (reportId: number, filename: string) =>
     `${API_BASE}/reports/${reportId}/chart.json?filename=${encodeURIComponent(filename)}`,
+
+  // Reading mode (HTML view, alternative to embedded PDF)
+  getReading: (id: number) => req<ReadingMode>(`/reports/${id}/reading`),
+  getPublicReading: async (id: number, token: string): Promise<ReadingMode> => {
+    const res = await fetch(`${API_BASE}/reports/${id}/share/${encodeURIComponent(token)}/reading`);
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    return (await res.json()) as ReadingMode;
+  },
+
+  // Uploads (PDF / CSV / spreadsheet attached to a report)
+  listUploads: (id: number) => req<UploadedDoc[]>(`/reports/${id}/uploads`),
+  uploadDocument: async (id: number, file: File): Promise<UploadedDoc> => {
+    const auth = authHeader();
+    const headers: Record<string, string> = {};
+    if (auth) headers["authorization"] = auth;
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch(`${API_BASE}/reports/${id}/uploads`, {
+      method: "POST",
+      headers,  // intentionally no content-type: browser sets multipart boundary
+      body: fd,
+    });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    return (await res.json()) as UploadedDoc;
+  },
+  deleteUpload: (id: number, filename: string) =>
+    req<{ deleted: boolean }>(`/reports/${id}/uploads/${encodeURIComponent(filename)}`, {
+      method: "DELETE",
+    }),
+
+  // Email a finished report
+  emailReport: (id: number, payload: { to: string; note?: string; include_pdf?: boolean }) =>
+    req<EmailReportResponse>(`/reports/${id}/email`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  // Per-model token + cost breakdown (Opus / Sonnet / Haiku)
+  getModelBreakdown: (id: number) =>
+    req<ModelBreakdownRow[]>(`/reports/${id}/model_breakdown`),
 
   // Public share links
   getShare: (id: number) => req<ShareInfo>(`/reports/${id}/share`),
