@@ -37,6 +37,14 @@ export interface TeamMember {
   rewrite_ratio: number | null;
 }
 
+export interface AppSettings {
+  model_haiku: string;
+  model_sonnet: string;
+  model_opus: string;
+  cost_per_report_usd: number;
+  cost_per_day_usd: number;
+}
+
 export interface PersonaDetail {
   slug: string;
   name: string;
@@ -165,6 +173,11 @@ export const api = {
   cancel: (id: number) => req<Report>(`/reports/${id}/cancel`, { method: "POST" }),
   listArchive: () => req<{ slug: string; name: string; role: string }[]>("/team/archive"),
   rehire: (slug: string) => req<{ slug: string; name: string; role: string; markdown: string }>(`/team/${slug}/rehire`, { method: "POST" }),
+
+  // Runtime settings
+  getSettings: () => req<AppSettings>("/settings"),
+  updateSettings: (payload: Partial<AppSettings>) =>
+    req<AppSettings>("/settings", { method: "PUT", body: JSON.stringify(payload) }),
   pdfUrl: (id: number) => `${API_BASE}/reports/${id}/pdf`,
 
   // Scout

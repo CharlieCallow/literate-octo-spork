@@ -148,6 +148,17 @@ class PersonaStatus(str, Enum):
     archived = "archived"  # fired; rehirable from /team archive (lives in team/archive/)
 
 
+class AppSetting(SQLModel, table=True):
+    """Free-form key/value store for runtime-editable settings (model IDs,
+    cost caps, etc.). Falls back to env-var values when a key is missing."""
+
+    __tablename__ = "app_settings"
+
+    key: str = Field(primary_key=True)
+    value: str
+    updated_at: datetime = Field(default_factory=_now)
+
+
 class Persona(SQLModel, table=True):
     """Source of truth for persona files. The filesystem is a write-through
     cache rehydrated from these rows at startup so Railway rebuilds don't

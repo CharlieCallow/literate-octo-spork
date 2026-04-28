@@ -121,10 +121,11 @@ def _today_spent() -> float:
 
 
 def _tracker(report: Report) -> CostTracker:
-    cap = report.budget_cap_usd if report.budget_cap_usd else settings.cost_per_report_usd
+    from api import app_settings
+    cap = report.budget_cap_usd if report.budget_cap_usd else app_settings.cost_per_report_usd()
     return CostTracker(
         report_cap=cap,
-        day_cap=settings.cost_per_day_usd,
+        day_cap=app_settings.cost_per_day_usd(),
         day_spent=_today_spent(),
     )
 
@@ -182,15 +183,16 @@ def _next_stage(stage: ReportStage) -> ReportStage:
 
 
 def _models_for(mode: ReportMode) -> dict[str, str]:
-    """Pick model IDs per stage based on report mode.
-    fast: Haiku end-to-end (testing). standard/deep: Opus EIC + Sonnet others."""
+    """Pick model IDs per stage based on report mode. Reads through
+    app_settings so dashboard overrides take effect immediately."""
+    from api import app_settings
     if mode == ReportMode.fast:
-        m = settings.model_haiku
+        m = app_settings.model_haiku()
         return {"editor": m, "analyst": m, "data": m}
     return {
-        "editor": settings.model_opus,
-        "analyst": settings.model_sonnet,
-        "data": settings.model_sonnet,
+        "editor": app_settings.model_opus(),
+        "analyst": app_settings.model_sonnet(),
+        "data": app_settings.model_sonnet(),
     }
 
 

@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.db import init_db
 from api.routes import health, recruiter, reports, scout, team
+from api.routes import settings as settings_routes
 from api.settings import settings
 
 log = logging.getLogger("api")
@@ -64,3 +65,4 @@ app.include_router(reports.router)
 app.include_router(team.router)
 app.include_router(scout.router)
 app.include_router(recruiter.router)
+app.include_router(settings_routes.router)
