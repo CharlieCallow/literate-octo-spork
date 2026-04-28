@@ -113,6 +113,18 @@ def _extract_local_citations(tool_name: str, out: Any, into: list[Citation]) -> 
         if u := (s.get("url") or s.get("hn_url")):
             into.append(Citation(url=u, title=s.get("title"), source=tool_name))
 
+    # Generic url-bearing rows for the new adapters: ctgov studies, github
+    # repos, arxiv papers, gdelt articles, defillama protocols.
+    for key in ("studies", "repos", "papers", "articles", "rows", "trending"):
+        items = data.get(key, []) or []
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if u := item.get("url"):
+                into.append(Citation(url=u, title=item.get("title") or item.get("name"), source=tool_name))
+
 
 class Agent:
     """Generic persona-driven agent. Concrete agents subclass to set defaults."""

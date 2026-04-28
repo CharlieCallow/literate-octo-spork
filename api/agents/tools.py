@@ -10,7 +10,22 @@ from typing import Any
 import pandas as pd
 
 from api.agents.base import Tool
-from api.data import edgar, fred, hn, reddit, wikipedia
+from api.data import (
+    arxiv,
+    coingecko,
+    ctgov,
+    defillama,
+    edgar,
+    eia,
+    fred,
+    gdelt,
+    github,
+    hn,
+    openfda,
+    reddit,
+    wikipedia,
+    worldbank,
+)
 from api.data import yfinance as yf_data
 from api.render import charts as chart_helpers
 
@@ -276,3 +291,279 @@ def hn_search_tool() -> Tool:
 def web_search_tool(max_uses: int = 5) -> dict[str, Any]:
     """Anthropic-managed web search. Pass via Agent.run(server_tools=[web_search_tool()])."""
     return {"type": "web_search_20250305", "name": "web_search", "max_uses": max_uses}
+
+
+# ---------- CoinGecko (crypto) ----------
+
+def coingecko_markets_tool() -> Tool:
+    def fn(limit: int = 25, vs_currency: str = "usd") -> str:
+        coins = coingecko.market_overview(vs_currency=vs_currency, limit=limit)
+        return json.dumps({"vs_currency": vs_currency, "n": len(coins), "coins": coins})
+
+    return Tool(
+        name="coingecko_markets",
+        description="Top crypto coins by market cap with price + 24h/7d/30d % change + volume.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "default": 25, "maximum": 100},
+                "vs_currency": {"type": "string", "default": "usd"},
+            },
+        },
+        fn=fn,
+    )
+
+
+def coingecko_trending_tool() -> Tool:
+    def fn() -> str:
+        coins = coingecko.trending()
+        return json.dumps({"trending": coins})
+
+    return Tool(
+        name="coingecko_trending",
+        description="Top trending crypto coins on CoinGecko in the last 24h.",
+        input_schema={"type": "object", "properties": {}},
+        fn=fn,
+    )
+
+
+# ---------- EIA (US energy) ----------
+
+def eia_series_tool() -> Tool:
+    def fn(route: str, frequency: str = "monthly", limit: int = 60) -> str:
+        try:
+            rows = eia.get_series(route, frequency=frequency, limit=limit)
+        except RuntimeError as e:
+            return json.dumps({"error": str(e)})
+        return json.dumps({"route": route, "frequency": frequency, "n": len(rows), "rows": rows})
+
+    return Tool(
+        name="eia_series",
+        description=(
+            "US Energy Information Administration time series. Routes look like "
+            "'petroleum/pri/spt/data' (spot prices), 'electricity/retail-sales/data', "
+            "'natural-gas/pri/sum/data', 'petroleum/stoc/wstk/data' (weekly stocks). "
+            "Browse https://www.eia.gov/opendata/browser/ for ids."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "route": {"type": "string"},
+                "frequency": {"type": "string", "enum": ["annual", "monthly", "weekly", "daily", "hourly"], "default": "monthly"},
+                "limit": {"type": "integer", "default": 60},
+            },
+            "required": ["route"],
+        },
+        fn=fn,
+    )
+
+
+# ---------- ClinicalTrials.gov ----------
+
+def clinical_trials_tool() -> Tool:
+    def fn(query: str | None = None, sponsor: str | None = None,
+           intervention: str | None = None, status: str | None = None,
+           phase: str | None = None, limit: int = 15) -> str:
+        rows = ctgov.search_studies(
+            query=query, sponsor=sponsor, intervention=intervention,
+            status=status, phase=phase, limit=limit,
+        )
+        return json.dumps({"n": len(rows), "studies": rows})
+
+    return Tool(
+        name="clinical_trials",
+        description="Search ClinicalTrials.gov for biotech pipeline data: studies by drug, sponsor, phase, status. Returns NCT id + sponsor + phase + dates + url.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "sponsor": {"type": "string", "description": "Lead sponsor (e.g. 'Pfizer')."},
+                "intervention": {"type": "string", "description": "Intervention name (e.g. 'semaglutide')."},
+                "status": {"type": "string", "description": "Overall status filter (e.g. 'RECRUITING', 'COMPLETED')."},
+                "phase": {"type": "string", "description": "'PHASE1' | 'PHASE2' | 'PHASE3' | 'PHASE4'."},
+                "limit": {"type": "integer", "default": 15, "maximum": 50},
+            },
+        },
+        fn=fn,
+    )
+
+
+# ---------- GitHub ----------
+
+def github_repo_tool() -> Tool:
+    def fn(owner: str, repo: str) -> str:
+        return json.dumps(github.repo_summary(owner, repo))
+
+    return Tool(
+        name="github_repo",
+        description="Summary metadata for a GitHub repo: stars, forks, language, topics, last push.",
+        input_schema={
+            "type": "object",
+            "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}},
+            "required": ["owner", "repo"],
+        },
+        fn=fn,
+    )
+
+
+def github_search_tool() -> Tool:
+    def fn(query: str, sort: str = "stars", limit: int = 10) -> str:
+        repos = github.search_repos(query, sort=sort, limit=limit)
+        return json.dumps({"query": query, "n": len(repos), "repos": repos})
+
+    return Tool(
+        name="github_search",
+        description="Search GitHub repos by free-text query. Useful for tracking developer interest in a topic.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "sort": {"type": "string", "enum": ["stars", "forks", "updated", "help-wanted-issues"], "default": "stars"},
+                "limit": {"type": "integer", "default": 10},
+            },
+            "required": ["query"],
+        },
+        fn=fn,
+    )
+
+
+# ---------- arXiv ----------
+
+def arxiv_tool() -> Tool:
+    def fn(query: str, limit: int = 10) -> str:
+        papers = arxiv.search(query, limit=limit)
+        return json.dumps({"query": query, "n": len(papers), "papers": papers})
+
+    return Tool(
+        name="arxiv_search",
+        description="Search arXiv research papers by free-text query. Useful for AI / quant / biotech / physics theses.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "limit": {"type": "integer", "default": 10, "maximum": 30},
+            },
+            "required": ["query"],
+        },
+        fn=fn,
+    )
+
+
+# ---------- GDELT ----------
+
+def gdelt_tool() -> Tool:
+    def fn(query: str, days: int = 3, limit: int = 15) -> str:
+        articles = gdelt.search_articles(query, days=days, limit=limit)
+        return json.dumps({"query": query, "n": len(articles), "articles": articles})
+
+    return Tool(
+        name="gdelt_news",
+        description="Search global news via GDELT (broader and faster than web_search for global / geopolitical themes).",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "days": {"type": "integer", "default": 3, "minimum": 1, "maximum": 7},
+                "limit": {"type": "integer", "default": 15},
+            },
+            "required": ["query"],
+        },
+        fn=fn,
+    )
+
+
+# ---------- World Bank ----------
+
+def worldbank_tool() -> Tool:
+    def fn(country: str, indicator: str, since: int = 2010) -> str:
+        rows = worldbank.get_series(country, indicator, since=since)
+        return json.dumps({
+            "country": country, "indicator": indicator, "since": since,
+            "n": len(rows), "rows": rows,
+        })
+
+    return Tool(
+        name="worldbank_series",
+        description=(
+            "World Bank cross-country macro indicator. Pass an ISO country code "
+            "(e.g. 'US', 'GBR', 'DEU') and an indicator id like "
+            "'NY.GDP.MKTP.KD.ZG' (GDP growth %), 'FP.CPI.TOTL.ZG' (CPI YoY), "
+            "'SL.UEM.TOTL.ZS' (unemployment %), 'GC.DOD.TOTL.GD.ZS' (debt/GDP). "
+            "Browse https://data.worldbank.org/indicator for the full catalogue."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "country": {"type": "string", "description": "ISO-2 or ISO-3 code, e.g. 'US' or 'GBR'."},
+                "indicator": {"type": "string", "description": "World Bank indicator id."},
+                "since": {"type": "integer", "default": 2010, "description": "Earliest year."},
+            },
+            "required": ["country", "indicator"],
+        },
+        fn=fn,
+    )
+
+
+# ---------- openFDA ----------
+
+def openfda_labels_tool() -> Tool:
+    def fn(query: str, limit: int = 10) -> str:
+        rows = openfda.drug_label_search(query, limit=limit)
+        return json.dumps({"query": query, "n": len(rows), "labels": rows})
+
+    return Tool(
+        name="openfda_drug_labels",
+        description="Search openFDA drug labels by drug name / sponsor / indication. Returns brand/generic name + manufacturer + indications.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "openFDA search syntax, e.g. 'openfda.brand_name:Ozempic'."},
+                "limit": {"type": "integer", "default": 10},
+            },
+            "required": ["query"],
+        },
+        fn=fn,
+    )
+
+
+def openfda_recalls_tool() -> Tool:
+    def fn(query: str | None = None, limit: int = 10) -> str:
+        rows = openfda.drug_recalls(query, limit=limit)
+        return json.dumps({"n": len(rows), "recalls": rows})
+
+    return Tool(
+        name="openfda_recalls",
+        description="Recent drug recalls from openFDA. Optional free-text filter.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "limit": {"type": "integer", "default": 10},
+            },
+        },
+        fn=fn,
+    )
+
+
+# ---------- DeFiLlama ----------
+
+def defillama_tool() -> Tool:
+    def fn(scope: str = "protocols", limit: int = 25) -> str:
+        if scope == "chains":
+            rows = defillama.chain_tvl(limit=limit)
+            return json.dumps({"scope": "chains", "n": len(rows), "rows": rows})
+        rows = defillama.top_protocols(limit=limit)
+        return json.dumps({"scope": "protocols", "n": len(rows), "rows": rows})
+
+    return Tool(
+        name="defillama",
+        description="DeFi market structure: top protocols by TVL with 1d/7d change, or TVL by chain.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "scope": {"type": "string", "enum": ["protocols", "chains"], "default": "protocols"},
+                "limit": {"type": "integer", "default": 25},
+            },
+        },
+        fn=fn,
+    )

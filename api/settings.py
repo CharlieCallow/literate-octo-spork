@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     database_url: str = f"sqlite:///{REPO_ROOT / 'forte.db'}"
 
     fred_api_key: str = ""
+    eia_api_key: str = ""
 
     reports_dir: Path = REPO_ROOT / "reports"
 

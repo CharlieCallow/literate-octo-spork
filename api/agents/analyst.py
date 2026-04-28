@@ -7,10 +7,22 @@ from pathlib import Path
 from api.agents.base import Agent, AgentResult, Tool
 from api.agents.cost import CostTracker
 from api.agents.tools import (
+    arxiv_tool,
+    clinical_trials_tool,
+    coingecko_markets_tool,
+    coingecko_trending_tool,
+    defillama_tool,
     edgar_filings_tool,
+    eia_series_tool,
     fred_series_tool,
+    gdelt_tool,
+    github_repo_tool,
+    github_search_tool,
+    openfda_labels_tool,
+    openfda_recalls_tool,
     web_search_tool,
     wikipedia_tool,
+    worldbank_tool,
     yfinance_history_tool,
 )
 from api.models import ReportMode
@@ -50,11 +62,30 @@ BRIEF:
 THEME: {theme}
 
 Run your research. Available tools:
-- `fred_series` — macro time series (rates, CPI, employment, etc.)
+
+Markets / macro:
+- `fred_series` — US macro time series (rates, CPI, employment, etc.)
 - `yfinance_history` — equity / ETF / FX / crypto / futures price history
+- `worldbank_series` — cross-country macro (GDP, debt, FX reserves)
+- `eia_series` — US energy data (oil, gas, electricity)
+
+Crypto / DeFi:
+- `coingecko_markets` — top crypto coins by market cap with % changes
+- `coingecko_trending` — what's trending on CoinGecko
+- `defillama` — DeFi TVL by protocol or by chain
+
+Filings / regulatory:
+- `edgar_filings` — recent SEC filings for a ticker (10-K, 10-Q, 8-K)
+- `openfda_drug_labels` — FDA drug labels search
+- `openfda_recalls` — recent drug recalls
+- `clinical_trials` — ClinicalTrials.gov pipeline data (sponsor, phase, status)
+
+Research / sentiment:
+- `arxiv_search` — research papers (AI / quant / biotech / physics)
+- `github_repo` / `github_search` — developer activity for tech themes
+- `gdelt_news` — global news search (broader than web_search)
 - `wikipedia_summary` — definitional and background context
-- `edgar_filings` — list recent SEC filings for a ticker
-- `web_search` — current news, headlines, broker notes (Anthropic-managed)
+- `web_search` — current news, broker notes (Anthropic-managed)
 
 Use whichever tools fit your beat. Stay in your voice. Write structured notes in markdown -- claims with evidence and sources. Cite inline: when a claim rests on a specific source, link it like `[short anchor text](https://exact-url)` so the renderer can turn it into a numbered footnote. Use real URLs from your tool results, never invent them. Be opinionated; hedging without conviction is the failure mode. Output ~300-500 words.
 """
@@ -63,6 +94,18 @@ Use whichever tools fit your beat. Stay in your voice. Write structured notes in
             yfinance_history_tool(),
             wikipedia_tool(),
             edgar_filings_tool(),
+            coingecko_markets_tool(),
+            coingecko_trending_tool(),
+            eia_series_tool(),
+            clinical_trials_tool(),
+            github_repo_tool(),
+            github_search_tool(),
+            arxiv_tool(),
+            gdelt_tool(),
+            worldbank_tool(),
+            openfda_labels_tool(),
+            openfda_recalls_tool(),
+            defillama_tool(),
         ]
         # Per-mode tuning. fast: drop web search (biggest cost driver) and
         # tighten loop. deep: bigger token + iter budget for thorough research.

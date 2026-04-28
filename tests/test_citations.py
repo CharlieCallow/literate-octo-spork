@@ -65,6 +65,29 @@ def test_local_extracts_reddit_permalinks() -> None:
     assert [c.url for c in cs] == ["https://reddit.com/r/wsb/abc", "https://reddit.com/r/wsb/def"]
 
 
+def test_local_extracts_url_bearing_rows_for_new_adapters() -> None:
+    """ctgov / github / arxiv / gdelt / defillama all return url-bearing
+    items under varied list keys. The extractor should pick them all up."""
+    cs: list[Citation] = []
+    _extract_local_citations("clinical_trials", json.dumps({
+        "n": 1, "studies": [{"title": "Phase 3 readout", "url": "https://clinicaltrials.gov/study/NCT01"}],
+    }), cs)
+    _extract_local_citations("arxiv_search", json.dumps({
+        "n": 1, "papers": [{"title": "An LLM paper", "url": "https://arxiv.org/abs/x"}],
+    }), cs)
+    _extract_local_citations("github_search", json.dumps({
+        "n": 1, "repos": [{"full_name": "x/y", "url": "https://github.com/x/y"}],
+    }), cs)
+    _extract_local_citations("gdelt_news", json.dumps({
+        "n": 1, "articles": [{"title": "headline", "url": "https://news.example.com/a"}],
+    }), cs)
+    urls = [c.url for c in cs]
+    assert "https://clinicaltrials.gov/study/NCT01" in urls
+    assert "https://arxiv.org/abs/x" in urls
+    assert "https://github.com/x/y" in urls
+    assert "https://news.example.com/a" in urls
+
+
 def test_local_extracts_hn_story_urls() -> None:
     out = json.dumps({
         "query": "semiconductors",
