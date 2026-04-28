@@ -21,13 +21,16 @@ html, body {
 a { color: var(--forte-purple); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
+/* ---- desktop layout ---- */
 .layout { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
+
 .sidebar {
   background: var(--forte-navy);
   color: #FFF;
   padding: 24px 20px;
 }
 .sidebar h1 { color: #FFF; font-size: 18px; letter-spacing: 0.04em; margin: 0 0 24px; }
+.sidebar nav { display: flex; flex-direction: column; }
 .sidebar nav a { display: block; color: rgba(255,255,255,0.78); padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.08); }
 .sidebar nav a:hover { color: var(--forte-teal); text-decoration: none; }
 .sidebar .accent { width: 32px; height: 2px; background: var(--forte-teal); margin: 8px 0 24px; }
@@ -48,11 +51,11 @@ button {
 button:hover { background: var(--forte-purple); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 
-input, textarea {
+input, textarea, select {
   width: 100%; padding: 8px 10px; border: 1px solid var(--forte-rule); border-radius: 4px;
   font: 14px Inter, sans-serif; background: #FFF;
 }
-input:focus, textarea:focus { outline: none; border-color: var(--forte-teal); }
+input:focus, textarea:focus, select:focus { outline: none; border-color: var(--forte-teal); }
 
 .stage-pill {
   display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px;
@@ -60,3 +63,51 @@ input:focus, textarea:focus { outline: none; border-color: var(--forte-teal); }
 }
 .stage-pill.done { background: #E8F4EE; color: #1E7A5A; }
 .stage-pill.failed { background: #FFF8E1; color: #B8860B; }
+.stage-pill.cancelled { background: var(--forte-rule); color: var(--forte-muted); }
+
+/* ---- inline citations ---- */
+sup.cite { font-size: 70%; vertical-align: super; line-height: 0; }
+sup.cite a { color: var(--forte-purple); text-decoration: none; padding: 0 1px; }
+sup.cite a:hover { text-decoration: underline; }
+
+/* ---- mobile / narrow ---- */
+@media (max-width: 768px) {
+  .layout {
+    grid-template-columns: 1fr;
+    min-height: auto;
+  }
+  .sidebar {
+    padding: 14px 16px;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  .sidebar h1 { margin: 0 0 8px; font-size: 16px; }
+  .sidebar .accent { display: none; }
+  .sidebar nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 0 14px;
+  }
+  .sidebar nav a {
+    padding: 4px 0;
+    border-bottom: 0;
+    font-size: 13px;
+  }
+
+  main { padding: 16px; }
+
+  .card { padding: 14px; }
+  .card h2 { font-size: 18px; }
+
+  /* Tables overflow horizontally rather than squashing */
+  .card table { display: block; overflow-x: auto; white-space: nowrap; }
+
+  /* Embed PDFs at a sensible mobile height, not 85vh */
+  iframe { height: 60vh !important; }
+
+  /* Stack the depth-mode picker on mobile */
+  .card > div[style*="display: flex"][style*="gap: 10px"] {
+    flex-direction: column !important;
+  }
+}

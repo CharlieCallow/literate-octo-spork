@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -40,6 +40,10 @@ class ReportOut(BaseModel):
 
     @classmethod
     def from_db(cls, r: Report) -> ReportOut:
+        # Postgres TIMESTAMP strips tzinfo on round-trip; re-attach UTC so the
+        # serialised ISO string carries an offset and JS doesn't parse it as
+        # local time. Existing rows are already in UTC -- they just lost the tag.
+        created_at = r.created_at if r.created_at.tzinfo else r.created_at.replace(tzinfo=UTC)
         return cls(
             id=r.id or 0,
             theme=r.theme,
@@ -51,7 +55,7 @@ class ReportOut(BaseModel):
             error=r.error,
             cost_usd=r.cost_usd,
             pdf_url=f"/reports/{r.id}/pdf" if r.pdf_path else None,
-            created_at=r.created_at,
+            created_at=created_at,
         )
 
 
