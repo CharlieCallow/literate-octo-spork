@@ -265,6 +265,82 @@ def status(session: Session = Depends(get_session)) -> WorkersStatus:
     )
 
 
+class EnumSyncResult(BaseModel):
+    """One entry per enum the sync ran on."""
+    type_name: str
+    existing_values: list[str]
+    python_values: list[str]
+    added: list[str]
+    still_missing: list[str]
+    error: str | None = None
+
+
+@router.post(
+    "/sync_enums",
+    response_model=list[EnumSyncResult],
+    dependencies=[Depends(require_auth)],
+)
+def sync_enums() -> list[EnumSyncResult]:
+    """Run the Postgres enum-sync migration on demand.
+
+    Triggered by the /workers page when an enum-mismatch error keeps
+    showing up after deploys -- saves a redeploy cycle. Returns the
+    diff per enum so the user can see what was added and what (if
+    anything) failed."""
+    from api.db import _enum_sync_map
+    from api.db import engine as db_engine
+
+    autocommit = db_engine.execution_options(isolation_level="AUTOCOMMIT")
+    out: list[EnumSyncResult] = []
+    for type_name, enum_cls in _enum_sync_map():
+        existing: list[str] = []
+        added: list[str] = []
+        error: str | None = None
+        python_values = [m.value for m in enum_cls]
+        try:
+            with db_engine.connect() as conn:
+                rows = conn.exec_driver_sql(
+                    "SELECT enumlabel FROM pg_enum e "
+                    "JOIN pg_type t ON e.enumtypid = t.oid "
+                    "WHERE t.typname = %s",
+                    (type_name,),
+                ).fetchall()
+            existing = sorted({r[0] for r in rows})
+            missing = [v for v in python_values if v not in existing]
+            if missing:
+                with autocommit.connect() as ac_conn:
+                    for value in missing:
+                        try:
+                            ac_conn.exec_driver_sql(
+                                f"ALTER TYPE {type_name} "
+                                f"ADD VALUE IF NOT EXISTS '{value}'"
+                            )
+                            added.append(value)
+                        except Exception as e:  # noqa: BLE001
+                            error = (error or "") + f"{value}: {e}; "
+                # Re-read to see what actually landed.
+                with db_engine.connect() as conn:
+                    rows = conn.exec_driver_sql(
+                        "SELECT enumlabel FROM pg_enum e "
+                        "JOIN pg_type t ON e.enumtypid = t.oid "
+                        "WHERE t.typname = %s",
+                        (type_name,),
+                    ).fetchall()
+                existing = sorted({r[0] for r in rows})
+        except Exception as e:  # noqa: BLE001
+            error = f"{type(e).__name__}: {e}"
+        still_missing = [v for v in python_values if v not in existing]
+        out.append(EnumSyncResult(
+            type_name=type_name,
+            existing_values=existing,
+            python_values=python_values,
+            added=added,
+            still_missing=still_missing,
+            error=error,
+        ))
+    return out
+
+
 @router.post("/jobs/{job_id}/force_fail", response_model=JobActivity, dependencies=[Depends(require_auth)])
 def force_fail_job(job_id: int, session: Session = Depends(get_session)) -> JobActivity:
     """Triage knob: mark a single running job as failed via the standard

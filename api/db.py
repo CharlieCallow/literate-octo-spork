@@ -207,47 +207,83 @@ def _enum_sync_map() -> list[tuple[str, type]]:
 
 def _sync_pg_enums() -> None:
     """For each registered (type_name, EnumClass), ALTER TYPE ADD VALUE
-    for any Python enum value that's missing from the Postgres type.
+    for any Python enum value missing from the Postgres type.
 
-    Each ADD VALUE runs in its own savepoint so a single failure (e.g.
-    a value that's already been added by another instance racing the
-    migration) doesn't poison the rest of the sync."""
+    Uses engine-level execution_options(isolation_level=AUTOCOMMIT) so
+    each ALTER TYPE statement runs as its own committed statement --
+    setting isolation_level on an already-opened branched connection
+    does NOT actually escape the parent transaction (the bug that left
+    `rebuttal` un-added on the first attempt).
+
+    Verifies the post-state and logs loudly if a value is still missing
+    so the next failure points clearly at Postgres permissions / role
+    issues instead of silently looking like a no-op."""
     import logging
     log = logging.getLogger("db.migrate")
+
+    autocommit_engine = engine.execution_options(isolation_level="AUTOCOMMIT")
+
+    def _read_values(type_name: str) -> set[str]:
+        with engine.connect() as conn:
+            rows = conn.exec_driver_sql(
+                "SELECT enumlabel FROM pg_enum e "
+                "JOIN pg_type t ON e.enumtypid = t.oid "
+                "WHERE t.typname = %s",
+                (type_name,),
+            ).fetchall()
+        return {r[0] for r in rows}
+
     for type_name, enum_cls in _enum_sync_map():
         try:
-            with engine.connect() as conn:
-                # Read what's already in the Postgres type.
-                rows = conn.exec_driver_sql(
-                    "SELECT enumlabel FROM pg_enum e "
-                    "JOIN pg_type t ON e.enumtypid = t.oid "
-                    "WHERE t.typname = %s",
-                    (type_name,),
-                ).fetchall()
-                existing = {r[0] for r in rows}
-                if not existing:
-                    # Type doesn't exist yet -- create_all() will create
-                    # it with all current values, so nothing to migrate.
-                    continue
-                for member in enum_cls:
-                    if member.value in existing:
-                        continue
-                    log.info(
-                        "syncing enum %s: ADD VALUE %r", type_name, member.value,
-                    )
+            existing = _read_values(type_name)
+            if not existing:
+                log.info(
+                    "enum %s not present in DB (will be created by create_all)",
+                    type_name,
+                )
+                continue
+            python_values = [m.value for m in enum_cls]
+            missing = [v for v in python_values if v not in existing]
+            if not missing:
+                log.info(
+                    "enum %s already in sync (%d values)", type_name, len(existing),
+                )
+                continue
+            log.warning(
+                "enum %s missing values %s -- attempting ALTER TYPE ADD VALUE",
+                type_name, missing,
+            )
+            with autocommit_engine.connect() as ac_conn:
+                for value in missing:
                     try:
-                        # ALTER TYPE ... ADD VALUE can't run inside a
-                        # transaction block in older Postgres; use
-                        # AUTOCOMMIT for the duration of this statement.
-                        ac = conn.execution_options(isolation_level="AUTOCOMMIT")
-                        ac.exec_driver_sql(
-                            f"ALTER TYPE {type_name} ADD VALUE IF NOT EXISTS '{member.value}'"
+                        ac_conn.exec_driver_sql(
+                            f"ALTER TYPE {type_name} ADD VALUE IF NOT EXISTS '{value}'"
+                        )
+                        log.warning(
+                            "enum %s: added value %r", type_name, value,
                         )
                     except Exception:  # noqa: BLE001
                         log.exception(
-                            "could not add %r to enum %s -- continuing",
-                            member.value, type_name,
+                            "ALTER TYPE %s ADD VALUE %r failed",
+                            type_name, value,
                         )
+            # Verify the post-state. If a value is STILL missing, the
+            # ALTER didn't take -- usually a Postgres permissions issue.
+            after = _read_values(type_name)
+            still_missing = [v for v in missing if v not in after]
+            if still_missing:
+                log.error(
+                    "enum %s STILL missing %s after ALTER TYPE -- "
+                    "the database role probably lacks the privilege to "
+                    "ALTER this type. The next INSERT with these values "
+                    "will fail.",
+                    type_name, still_missing,
+                )
+            else:
+                log.warning(
+                    "enum %s now in sync (added %d values)",
+                    type_name, len(missing),
+                )
         except Exception:  # noqa: BLE001
             log.exception("enum sync for %s failed (non-blocking)", type_name)
 

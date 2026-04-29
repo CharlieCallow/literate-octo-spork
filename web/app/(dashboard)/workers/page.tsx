@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { AuthGate } from "@/components/Auth";
-import { api, type JobActivity, type WorkersStatus } from "@/lib/api";
+import { api, type EnumSyncResult, type JobActivity, type WorkersStatus } from "@/lib/api";
 
 const POLL_MS = 3000;
 
@@ -33,6 +33,8 @@ export default function WorkersPage() {
   const [error, setError] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
   const [actingOn, setActingOn] = useState<number | null>(null);
+  const [enumSync, setEnumSync] = useState<EnumSyncResult[] | null>(null);
+  const [enumSyncing, setEnumSyncing] = useState(false);
   const tickRef = useRef<number | null>(null);
 
   async function refresh(): Promise<void> {
@@ -52,6 +54,17 @@ export default function WorkersPage() {
       if (tickRef.current != null) window.clearInterval(tickRef.current);
     };
   }, [paused]);
+
+  async function runEnumSync(): Promise<void> {
+    setEnumSyncing(true);
+    try {
+      setEnumSync(await api.syncEnums());
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setEnumSyncing(false);
+    }
+  }
 
   async function killOne(jobId: number): Promise<void> {
     if (!window.confirm(
@@ -250,8 +263,66 @@ export default function WorkersPage() {
           }}>
             {data.worker_last_error.message}
           </pre>
+          {/^|\n/.test(data.worker_last_error.message) && data.worker_last_error.message.includes("invalid input value for enum") && (
+            <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--forte-navy)" }}>
+              Enum mismatch detected — the Postgres enum type is missing a value
+              the Python code uses. Click <strong>Sync DB enums</strong> below to
+              run ALTER TYPE ADD VALUE for every missing entry without redeploying.
+            </p>
+          )}
         </div>
       )}
+
+      <div className="card">
+        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <h2 style={{ margin: 0, color: "var(--forte-navy)", fontSize: 16 }}>
+            DB enum migration
+          </h2>
+          <button
+            onClick={runEnumSync}
+            disabled={enumSyncing}
+            style={{ marginLeft: "auto", padding: "3px 12px", fontSize: 12 }}
+          >
+            {enumSyncing ? "Syncing…" : "Sync DB enums"}
+          </button>
+        </div>
+        <p className="muted" style={{ marginTop: 4, fontSize: 12 }}>
+          Manually run ALTER TYPE ADD VALUE for any Python enum value that&apos;s
+          missing from the Postgres type. Idempotent. Use this when you see
+          &quot;invalid input value for enum&quot; in the worker error and don&apos;t want to
+          wait for the next deploy.
+        </p>
+        {enumSync && (
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginTop: 8 }}>
+            <thead>
+              <tr style={{ textAlign: "left", borderBottom: "1px solid var(--forte-rule)" }}>
+                <th style={{ padding: "4px 6px" }}>Type</th>
+                <th>Existing</th>
+                <th>Added now</th>
+                <th>Still missing</th>
+                <th>Error</th>
+              </tr>
+            </thead>
+            <tbody>
+              {enumSync.map((r) => (
+                <tr key={r.type_name}>
+                  <td style={{ padding: "4px 6px", fontFamily: "var(--font-mono, monospace)" }}>
+                    {r.type_name}
+                  </td>
+                  <td>{r.existing_values.length}</td>
+                  <td style={{ color: r.added.length > 0 ? "var(--forte-navy)" : undefined }}>
+                    {r.added.length > 0 ? r.added.join(", ") : "—"}
+                  </td>
+                  <td style={{ color: r.still_missing.length > 0 ? "#A33" : undefined }}>
+                    {r.still_missing.length > 0 ? r.still_missing.join(", ") : "—"}
+                  </td>
+                  <td style={{ color: "#A33", fontSize: 11 }}>{r.error ?? ""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
 
       {error && <div className="card"><p style={{ color: "#A33" }}>{error}</p></div>}
 
