@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.db import init_db
-from api.routes import health, recruiter, reports, scout, team
+from api.routes import health, recruiter, reports, scout, team, workers
 from api.routes import settings as settings_routes
 from api.settings import settings
 
@@ -66,3 +66,4 @@ app.include_router(team.router)
 app.include_router(scout.router)
 app.include_router(recruiter.router)
 app.include_router(settings_routes.router)
+app.include_router(workers.router)

@@ -13,6 +13,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           <a href="/archive">Archive</a>
           <a href="/positions">Positions</a>
           <a href="/team">Team</a>
+          <a href="/workers">Workers</a>
           <a href="/settings">Settings</a>
         </nav>
       </aside>

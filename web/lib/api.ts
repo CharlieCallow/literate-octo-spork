@@ -150,6 +150,35 @@ export interface Job {
   finished_at: string | null;
 }
 
+export interface JobActivity {
+  job_id: number;
+  report_id: number;
+  report_theme: string;
+  report_mode: ReportMode;
+  stage: ReportStage;
+  status: "pending" | "running" | "done" | "failed";
+  attempts: number;
+  started_at: string | null;
+  finished_at: string | null;
+  last_error: string | null;
+  cost_usd: number;
+  age_seconds: number | null;
+  last_event_seconds_ago: number | null;
+  last_event: string | null;
+  last_event_actor: string | null;
+  deadline_seconds: number | null;
+  is_stuck: boolean;
+}
+
+export interface WorkersStatus {
+  now: string;
+  last_activity_at: string | null;
+  last_activity_seconds_ago: number | null;
+  running: JobActivity[];
+  pending: JobActivity[];
+  recent_failures: JobActivity[];
+}
+
 export interface Theme {
   id: number;
   scout_run_id: number;
@@ -303,6 +332,11 @@ export const api = {
     req<{ filename: string; has_json: boolean }[]>(`/reports/${reportId}/charts`),
   getChartJson: (reportId: number, filename: string) =>
     req<ChartSpec>(`/reports/${reportId}/chart.json?filename=${encodeURIComponent(filename)}`),
+
+  // Worker / job diagnostics
+  workersStatus: () => req<WorkersStatus>("/workers/status"),
+  forceFailJob: (jobId: number) =>
+    req<JobActivity>(`/workers/jobs/${jobId}/force_fail`, { method: "POST" }),
 
   // Audit log
   getAuditLog: (reportId: number, filter?: { event?: string; actor?: string }) => {
