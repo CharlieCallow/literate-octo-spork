@@ -23,13 +23,16 @@ BACKOFF_BASE_S = 2  # 2s, 4s, 8s
 # Per-mode wall-clock deadline a single stage is allowed to hold the
 # `running` lease. After this the watchdog assumes the worker died and
 # reclaims the job through the normal failure path. Generous so that a
-# slow-but-alive deep run doesn't get culled mid-call.
+# slow-but-alive deep run doesn't get culled mid-call. Deliberately set
+# above the per-call timeouts in state_machine so the watchdog only
+# fires when something is genuinely wedged, not when one slow analyst
+# is still pushing through retries.
 STUCK_JOB_DEADLINE_S: dict[ReportMode, int] = {
-    ReportMode.fast:     5 * 60,    # 5 min
-    ReportMode.standard: 15 * 60,   # 15 min
-    ReportMode.deep:     30 * 60,   # 30 min
+    ReportMode.fast:     8 * 60,    # 8 min
+    ReportMode.standard: 25 * 60,   # 25 min
+    ReportMode.deep:     45 * 60,   # 45 min
 }
-_DEFAULT_STUCK_DEADLINE_S = 15 * 60
+_DEFAULT_STUCK_DEADLINE_S = 25 * 60
 
 
 def claim_one_job() -> Job | None:

@@ -29,6 +29,25 @@ from api.workflow.audit import audit_hook
 
 log = logging.getLogger("workflow")
 
+# Concurrency + timeout caps for the parallel-analyst stages. Anthropic
+# enforces both per-minute token caps and concurrent-request limits, so
+# spawning 8 analysts at once tends to make most of them queue inside
+# the SDK anyway. Cap to 4 in flight; abandon any one call past the
+# per-call deadline so the rest of the stage doesn't get held hostage
+# by one slow contributor.
+_PARALLEL_ANALYST_CAP = 4
+# Draft is a single LLM call per analyst (no tools); 4 minutes is
+# extremely generous even with one Anthropic SDK retry.
+_DRAFT_CALL_TIMEOUT_S = 240.0
+# Research is tool-using; allow more headroom on deep mode where the
+# analyst may iterate through 10 tool calls.
+_RESEARCH_CALL_TIMEOUT_S: dict[ReportMode, float] = {
+    ReportMode.fast:     180.0,
+    ReportMode.standard: 360.0,
+    ReportMode.deep:     600.0,
+}
+
+
 STAGE_ORDER: list[ReportStage] = [
     ReportStage.brief,
     ReportStage.recruit,
@@ -313,19 +332,82 @@ def _resolved_contributors(report: Report, brief: str) -> list[dict[str, str]]:
     return valid or get_roster()
 
 
-def _run_concurrently(calls: list[Callable[[], AgentResult]]) -> list[AgentResult]:
+def _run_concurrently(
+    calls: list[Callable[[], AgentResult]],
+    *,
+    per_call_timeout_s: float | None = None,
+    max_workers: int | None = None,
+    labels: list[str] | None = None,
+) -> list[AgentResult]:
     """Run a batch of zero-arg callables in parallel threads, return their
-    AgentResults in submission order. Used by research + draft stages to
-    fan analysts out instead of running them serially."""
+    AgentResults in submission order.
+
+    `per_call_timeout_s`: max wall-clock to wait for any single call. A
+    call that exceeds it is abandoned (the future is left to drain into
+    the executor's shutdown) and replaced with an error placeholder so
+    the slow contributor doesn't block the whole stage. The most common
+    cause is one analyst hitting Anthropic rate-limit retries while the
+    others have already finished.
+
+    `max_workers`: cap on concurrent threads. Anthropic enforces both
+    per-minute token caps and concurrent-request limits; spawning eight
+    analysts at once means most of them queue inside the SDK anyway.
+
+    `labels`: optional human-readable name per call for log lines."""
     from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as FTimeout
 
     if not calls:
         return []
+    workers = max_workers or len(calls)
+    workers = max(1, min(workers, len(calls)))
+
+    if labels is None:
+        labels = [f"call[{i}]" for i in range(len(calls))]
+    if len(labels) != len(calls):
+        labels = [f"call[{i}]" for i in range(len(calls))]
+
+    # Single-call shortcut: no need to spin a pool.
     if len(calls) == 1:
-        return [calls[0]()]
-    with ThreadPoolExecutor(max_workers=len(calls)) as ex:
-        futures = [ex.submit(c) for c in calls]
-        return [f.result() for f in futures]
+        try:
+            return [calls[0]()]
+        except Exception as e:  # noqa: BLE001
+            log.exception("%s failed (non-blocking)", labels[0])
+            return [AgentResult(text=f"[{labels[0]} failed: {e}]", cost_usd=0.0)]
+
+    results: list[AgentResult] = [
+        AgentResult(text="", cost_usd=0.0) for _ in calls
+    ]
+    # Don't auto-shutdown(wait=True) the pool on context exit -- if a
+    # thread is hung waiting on Anthropic, the implicit wait would
+    # re-introduce the original deadlock. We pass wait=False at end.
+    ex = ThreadPoolExecutor(max_workers=workers)
+    try:
+        futures = {ex.submit(c): i for i, c in enumerate(calls)}
+        for fut, i in list(futures.items()):
+            label = labels[i]
+            try:
+                results[i] = fut.result(timeout=per_call_timeout_s)
+            except FTimeout:
+                log.warning(
+                    "%s exceeded %.0fs timeout; abandoning so the stage can move on",
+                    label, per_call_timeout_s or 0.0,
+                )
+                results[i] = AgentResult(
+                    text=f"[{label} timed out after {per_call_timeout_s:.0f}s]",
+                    cost_usd=0.0,
+                )
+            except Exception as e:  # noqa: BLE001
+                log.exception("%s failed", label)
+                results[i] = AgentResult(
+                    text=f"[{label} failed: {e}]", cost_usd=0.0,
+                )
+    finally:
+        # Don't wait for hung threads -- the worker process owns them and
+        # they'll get reaped if the process restarts. We've already moved
+        # on with placeholders.
+        ex.shutdown(wait=False, cancel_futures=True)
+    return results
 
 
 def run_stage(report: Report, stage: ReportStage) -> ReportStage:
@@ -475,7 +557,15 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             ))
             for a in analysts
         ]
-        results = _run_concurrently(research_calls)
+        # Research is tool-using and can legitimately run several minutes
+        # per analyst. Cap per-call so one slow contributor doesn't hold
+        # up the rest, and cap concurrency so we don't slam Anthropic.
+        results = _run_concurrently(
+            research_calls,
+            per_call_timeout_s=_RESEARCH_CALL_TIMEOUT_S[report.mode],
+            max_workers=_PARALLEL_ANALYST_CAP,
+            labels=[f"research:{c['slug']}" for c in contributors],
+        )
         for c, result in zip(contributors, results, strict=True):
             _write(wd / f"notes-{c['slug']}.md", result.text)
             _record(report.id, wd, result)
@@ -545,7 +635,16 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             (lambda a=a, n=n: a.draft(brief, n, report.theme))  # type: ignore[misc]
             for a, n in zip(analysts, notes_per_contributor, strict=True)
         ]
-        results = _run_concurrently(draft_calls)
+        # Draft is a single LLM call per analyst (no tools) so it should
+        # never legitimately need more than 4 minutes. Cap per-call so
+        # one stuck contributor doesn't take the whole stage past the
+        # watchdog deadline.
+        results = _run_concurrently(
+            draft_calls,
+            per_call_timeout_s=_DRAFT_CALL_TIMEOUT_S,
+            max_workers=_PARALLEL_ANALYST_CAP,
+            labels=[f"draft:{c['slug']}" for c in contributors],
+        )
         for c, result in zip(contributors, results, strict=True):
             _write(wd / f"section-{c['slug']}.md", result.text)
             _record(report.id, wd, result)
@@ -592,7 +691,12 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             )
 
         slugs_in_order = [c["slug"] for c in contributors if c["slug"] in sections_by_slug]
-        rebuttal_results = _run_concurrently([_rebut_call(s) for s in slugs_in_order])
+        rebuttal_results = _run_concurrently(
+            [_rebut_call(s) for s in slugs_in_order],
+            per_call_timeout_s=_DRAFT_CALL_TIMEOUT_S,
+            max_workers=_PARALLEL_ANALYST_CAP,
+            labels=[f"rebuttal:{s}" for s in slugs_in_order],
+        )
 
         rebuttal_lines: list[str] = ["# Rebuttals\n"]
         for slug, result in zip(slugs_in_order, rebuttal_results, strict=True):

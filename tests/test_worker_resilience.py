@@ -367,7 +367,12 @@ def test_workers_status_flags_stuck_jobs_past_lease(db, monkeypatch) -> None:  #
     from api.routes.workers import status
 
     report_id = _seed_report(db)
-    started_long_ago = datetime.now(UTC) - timedelta(minutes=20)
+    # Past the standard-mode lease (which is loose enough to never beat
+    # the per-call timeouts in state_machine).
+    from api.models import ReportMode
+    from api.workflow.runner import STUCK_JOB_DEADLINE_S
+    deadline_s = STUCK_JOB_DEADLINE_S[ReportMode.standard]
+    started_long_ago = datetime.now(UTC) - timedelta(seconds=deadline_s + 60)
     with Session(db) as session:
         session.add(Job(
             report_id=report_id, stage=ReportStage.draft,
@@ -630,6 +635,93 @@ def test_workers_status_supervisor_disabled_when_unbundled(db, monkeypatch) -> N
         out = status(session=session)
     assert out.supervisor.enabled is False
     assert out.supervisor.crash_count == 0
+
+
+# ----------------------------------------------------------------------
+# _run_concurrently per-call timeout
+# ----------------------------------------------------------------------
+
+def test_run_concurrently_abandons_slow_call_so_others_can_finish() -> None:
+    """One slow analyst should not block the rest of the stage. Without
+    this, a single rate-limited contributor would hold up the whole
+    parallel batch past the watchdog deadline -- exactly the failure
+    mode the nuclear-power-deals draft hit (repeatedly)."""
+    import time
+
+    from api.agents.base import AgentResult
+    from api.workflow.state_machine import _run_concurrently
+
+    def fast() -> AgentResult:
+        return AgentResult(text="fast done", cost_usd=0.01)
+
+    def slow() -> AgentResult:
+        time.sleep(2.0)  # well past the 0.3s timeout we'll use
+        return AgentResult(text="slow done", cost_usd=0.02)
+
+    out = _run_concurrently(
+        [fast, slow, fast],
+        per_call_timeout_s=0.3,
+        labels=["a", "slow-one", "c"],
+    )
+    assert out[0].text == "fast done"
+    assert "timed out" in out[1].text and "slow-one" in out[1].text
+    assert out[2].text == "fast done"
+
+
+def test_run_concurrently_records_individual_failures() -> None:
+    """A call that raises must be captured -- not propagate up and kill
+    the rest of the stage. Otherwise one analyst blowing up takes the
+    whole report down."""
+    from api.agents.base import AgentResult
+    from api.workflow.state_machine import _run_concurrently
+
+    def good() -> AgentResult:
+        return AgentResult(text="ok", cost_usd=0.01)
+
+    def boom() -> AgentResult:
+        raise ValueError("synthetic")
+
+    out = _run_concurrently(
+        [good, boom, good],
+        per_call_timeout_s=2.0,
+        labels=["g1", "boom-one", "g2"],
+    )
+    assert out[0].text == "ok"
+    assert "boom-one failed" in out[1].text
+    assert "synthetic" in out[1].text
+    assert out[2].text == "ok"
+
+
+def test_run_concurrently_caps_max_workers() -> None:
+    """`max_workers` should cap concurrency even when more callables are
+    submitted -- protects Anthropic from getting hammered with 8 calls
+    when only 4 will actually be in flight."""
+    import threading
+    import time
+
+    from api.agents.base import AgentResult
+    from api.workflow.state_machine import _run_concurrently
+
+    in_flight = 0
+    peak = 0
+    lock = threading.Lock()
+
+    def measure() -> AgentResult:
+        nonlocal in_flight, peak
+        with lock:
+            in_flight += 1
+            peak = max(peak, in_flight)
+        time.sleep(0.05)
+        with lock:
+            in_flight -= 1
+        return AgentResult(text="ok", cost_usd=0.0)
+
+    _run_concurrently(
+        [measure for _ in range(8)],
+        per_call_timeout_s=2.0,
+        max_workers=3,
+    )
+    assert peak <= 3, f"expected peak<=3, got {peak}"
 
 
 def test_workers_force_fail_endpoint_routes_through_failure_path(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
