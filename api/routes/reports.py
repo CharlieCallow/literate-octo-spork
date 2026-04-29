@@ -919,6 +919,7 @@ class ReadingMode(BaseModel):
     house_view_top: str | None
     house_view_bottom: str | None
     sections: list[ReadingSection]
+    glossary_html: str | None = None
     sources: list[ReadingSource]
     created_at: datetime
 
@@ -1014,6 +1015,23 @@ def _build_reading_payload(report: Report, *, public_token: str | None = None) -
         for s in cited_sections
     ]
 
+    # Glossary appendix lives in its own slot at the end of the read --
+    # rendered after the bottom-line callout, before sources -- so it
+    # doesn't get sandwiched between contributor sections.
+    glossary_path = wd / "glossary.md"
+    glossary_html: str | None = None
+    if glossary_path.exists():
+        from api.agents.glossary import is_empty
+        gl_text = glossary_path.read_text(encoding="utf-8")
+        if not is_empty(gl_text):
+            body = gl_text
+            for line in gl_text.splitlines():
+                if line.lstrip().startswith("# "):
+                    after = gl_text.split(line, 1)[1]
+                    body = after.lstrip("\n")
+                    break
+            glossary_html = md.render(body)
+
     contributors = [
         {"name": EIC_DISPLAY["name"], "role": EIC_DISPLAY["role"]},
         *[{"name": c["name"], "role": c["role"]} for c in _resolved_contributors(report, brief)],
@@ -1029,6 +1047,7 @@ def _build_reading_payload(report: Report, *, public_token: str | None = None) -
         house_view_top=str(parsed.get("house_view_top") or "") or None,
         house_view_bottom=str(parsed.get("house_view_bottom") or "") or None,
         sections=sections,
+        glossary_html=glossary_html,
         sources=[
             ReadingSource(
                 n=int(s["n"] or "0"),

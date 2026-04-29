@@ -303,4 +303,10 @@ Return JSON-ish markdown in EXACTLY this structure (use the literal headings —
 1. What to watch — the 1-2 indicators that, if they move, change the trade.
 2. Pre-mortem. Lead with the literal phrase "When we'll know we're wrong:" followed by a falsifying condition tied to a specific date or window (e.g. "by Q3 2026", "if the Sept FOMC dot plot revises higher"). Be specific enough that future-you can decide unambiguously whether the call worked.>
 """
-        return self.run(prompt, max_tokens=4096)
+        # 8192 (Sonnet/Haiku ceiling) instead of 4096. With 4-6 contributors
+        # the output is OPENING + HOUSE VIEW (TOP) + REVISED SECTIONS x N
+        # + DISAGREEMENT + BEAR CASE + HOUSE VIEW (BOTTOM) + CLOSING --
+        # 4096 tokens routinely truncated mid-DISAGREEMENT (which lands
+        # after the long REVISED SECTIONS block). Cap at 8192 to keep us
+        # within Sonnet/Haiku's standard output window.
+        return self.run(prompt, max_tokens=8192)

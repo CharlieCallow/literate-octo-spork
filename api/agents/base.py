@@ -61,6 +61,11 @@ class AgentResult:
     citations: list[Citation] = field(default_factory=list)
     transcript: list[dict[str, Any]] = field(default_factory=list)
     tool_outputs: list[ToolOutput] = field(default_factory=list)
+    # `stop_reason` from the final Anthropic response. "end_turn" = clean
+    # finish; "max_tokens" = the model ran out of output budget mid-stream.
+    # Callers (e.g. the EIC's edit stage) check this to detect truncated
+    # output and either retry, raise, or surface a warning.
+    stop_reason: str | None = None
 
 
 # Anthropic's web_search sometimes emits citation markup the model doesn't fully
@@ -257,12 +262,22 @@ class Agent:
 
             if resp.stop_reason != "tool_use":
                 text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
+                stop_reason = getattr(resp, "stop_reason", None)
+                if stop_reason == "max_tokens":
+                    log.warning(
+                        "agent=%s hit max_tokens (%d) -- output likely truncated mid-stream",
+                        self.slug, max_tokens,
+                    )
+                    self.audit("max_tokens_hit", {
+                        "agent": self.slug, "max_tokens": max_tokens,
+                    })
                 return AgentResult(
                     text=sanitize_agent_text(text).strip(),
                     cost_usd=total_cost,
                     citations=citations,
                     transcript=transcript,
                     tool_outputs=tool_outputs,
+                    stop_reason=stop_reason,
                 )
 
             tool_results: list[dict[str, Any]] = []

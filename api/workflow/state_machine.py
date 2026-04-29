@@ -862,6 +862,27 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         )
         _write(wd / "edited.md", result.text)
         _record(report.id, wd, result)
+        # Truncation guard. If the editor hit max_tokens, the rendered
+        # PDF will cut off mid-block (typically inside DISAGREEMENT,
+        # which lands after the long REVISED SECTIONS). Flag it on the
+        # report row so the dashboard shows a warning instead of
+        # rendering broken prose silently.
+        if result.stop_reason == "max_tokens":
+            log.warning(
+                "edit stage hit max_tokens for report %s -- prose may be truncated",
+                report.id,
+            )
+            with Session(engine) as session:
+                r = session.get(Report, report.id)
+                if r:
+                    note = (
+                        "Editor output hit max_tokens cap and may be "
+                        "truncated mid-block. Try /resume from edit; "
+                        "if it persists, fewer contributors will fit."
+                    )
+                    r.error = (r.error + "\n\n" + note) if r.error else note
+                    session.add(r)
+                    session.commit()
         return _next_stage(stage, report.mode)
 
     if stage == ReportStage.audit:
@@ -930,7 +951,11 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         # Glossary appendix: a Haiku pass over the edited prose tags
         # the technical terms a generalist reader wouldn't know. Best-
         # effort -- a failure here just means no appendix. Skipped on
-        # test mode (smoke runs don't get the polish layer).
+        # test mode (smoke runs don't get the polish layer). Stored as
+        # a stand-alone string so the PDF template can place it at the
+        # end (after disagreement / bear case / bottom line, before
+        # sources) rather than inlining as another contributor section.
+        glossary_md: str | None = None
         if report.mode != ReportMode.test:
             try:
                 from api.agents.glossary import Glossary, is_empty
@@ -940,18 +965,16 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
                 _record(report.id, wd, gl_result)
                 _write(wd / "glossary.md", gl_text)
                 if not is_empty(gl_text):
-                    # Strip the model's `# Glossary` heading; the
-                    # renderer adds its own from Section.heading.
+                    # Strip the model's leading `# Glossary` heading; the
+                    # template adds its own. Defensive against the model
+                    # forgetting the heading or wrapping it differently.
                     body = gl_text
                     for line in gl_text.splitlines():
                         if line.lstrip().startswith("# "):
                             after = gl_text.split(line, 1)[1]
                             body = after.lstrip("\n")
                             break
-                    raw_sections.append(Section(
-                        heading="Glossary",
-                        body_md=body,
-                    ))
+                    glossary_md = body
             except Exception:  # noqa: BLE001
                 log.exception("glossary build failed (non-blocking)")
 
@@ -985,6 +1008,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             house_view_bottom=parsed.get("house_view_bottom"),
             disagreement=parsed.get("disagreement") or None,
             bear_case=parsed.get("bear_case") or None,
+            glossary=glossary_md,
             positions=positions_table or None,
             read_minutes=8,
             sources=ordered_sources,
