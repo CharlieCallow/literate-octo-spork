@@ -57,7 +57,9 @@ def _propose_promotions(session: Session) -> int:
         return 0
     added = 0
     done_reports = session.exec(
-        select(Report).where(Report.stage == ReportStage.done)
+        select(Report)
+        .where(Report.stage == ReportStage.done)
+        .where(Report.is_test == False)  # noqa: E712 -- test runs don't count as real work
     ).all()
 
     for path in temp_dir.glob("*.md"):

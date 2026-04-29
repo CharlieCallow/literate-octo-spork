@@ -126,6 +126,8 @@ def _migrate_sqlite() -> None:
             # Extend-the-surface: source-diversity flag.
             ("reports", "ALTER TABLE reports ADD COLUMN max_domain_share REAL"),
             ("reports", "ALTER TABLE reports ADD COLUMN top_domain VARCHAR"),
+            # Test-mode marker (mirror of the Postgres migration above).
+            ("reports", "ALTER TABLE reports ADD COLUMN is_test BOOLEAN DEFAULT 0 NOT NULL"),
         ]
         with engine.connect() as conn:
             for _table, sql in additions:
@@ -148,6 +150,11 @@ def _migrate_sqlite() -> None:
             "ALTER TABLE reports ADD COLUMN IF NOT EXISTS mentioned_themes JSON DEFAULT '[]'::json",
             "ALTER TABLE reports ADD COLUMN IF NOT EXISTS max_domain_share DOUBLE PRECISION",
             "ALTER TABLE reports ADD COLUMN IF NOT EXISTS top_domain VARCHAR",
+            # Mark test-mode runs as throwaway so the firm's memory
+            # (Scout, archive default, perf ledger, house view) can
+            # filter them out.
+            "ALTER TABLE reports ADD COLUMN IF NOT EXISTS is_test BOOLEAN DEFAULT FALSE NOT NULL",
+            "CREATE INDEX IF NOT EXISTS ix_reports_is_test ON reports (is_test)",
             # uploaded_documents: created_all() handles fresh deploys; this
             # CREATE-IF-NOT-EXISTS keeps the table present on existing prod
             # databases that pre-date the upload feature.

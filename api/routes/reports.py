@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import secrets
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -41,6 +41,7 @@ class ReportOut(BaseModel):
     pdf_url: str | None
     max_domain_share: float | None
     top_domain: str | None
+    is_test: bool
     created_at: datetime
 
     @classmethod
@@ -63,6 +64,7 @@ class ReportOut(BaseModel):
             pdf_url=f"/reports/{r.id}/pdf" if r.pdf_path else None,
             max_domain_share=r.max_domain_share,
             top_domain=r.top_domain,
+            is_test=bool(r.is_test),
             created_at=created_at,
         )
 
@@ -80,6 +82,10 @@ def create(payload: CreateReport, session: Session = Depends(get_session)) -> Re
         mode=payload.mode,
         team_override=team,
         budget_cap_usd=payload.budget_cap_usd,
+        # Test-mode runs are throwaway smoke tests -- mark them so they
+        # don't pollute Scout's "past reports" anchor / archive default /
+        # performance ledger / house view.
+        is_test=(payload.mode == ReportMode.test),
     )
     session.add(report)
     session.commit()
@@ -92,8 +98,17 @@ def create(payload: CreateReport, session: Session = Depends(get_session)) -> Re
 
 
 @router.get("", response_model=list[ReportOut], dependencies=[Depends(require_auth)])
-def list_reports(session: Session = Depends(get_session)) -> list[ReportOut]:
-    rows = session.exec(select(Report).order_by(Report.created_at.desc())).all()
+def list_reports(
+    include_test: bool = False,
+    session: Session = Depends(get_session),
+) -> list[ReportOut]:
+    """List all reports newest first. By default excludes throwaway
+    test-mode runs; pass `include_test=true` to surface them (the
+    dashboard's archive page exposes a toggle)."""
+    stmt = select(Report)
+    if not include_test:
+        stmt = stmt.where(Report.is_test == False)  # noqa: E712
+    rows = session.exec(stmt.order_by(Report.created_at.desc())).all()
     return [ReportOut.from_db(r) for r in rows]
 
 
@@ -227,6 +242,52 @@ def list_jobs(report_id: int, session: Session = Depends(get_session)) -> list[J
 class StageEstimate(BaseModel):
     stage: ReportStage
     seconds: float
+
+
+class ModeCostStat(BaseModel):
+    mode: ReportMode
+    n: int
+    median_cost_usd: float | None
+    p90_cost_usd: float | None
+
+
+@router.get(
+    "/cost_stats",
+    response_model=list[ModeCostStat],
+    dependencies=[Depends(require_auth)],
+)
+def cost_stats(session: Session = Depends(get_session)) -> list[ModeCostStat]:
+    """Trailing-30-day median + p90 cost per mode, computed off completed
+    reports. The /new confirm dialog reads this to ground its estimates
+    in actuals -- the static MODE_ESTIMATES dict drifts as prompts grow."""
+    cutoff = datetime.now(UTC) - timedelta(days=30)
+    rows = session.exec(
+        select(Report)
+        .where(Report.stage == ReportStage.done)
+        .where(Report.created_at >= cutoff)
+    ).all()
+    by_mode: dict[ReportMode, list[float]] = {}
+    for r in rows:
+        by_mode.setdefault(r.mode, []).append(r.cost_usd)
+
+    def _percentile(vals: list[float], pct: float) -> float | None:
+        if not vals:
+            return None
+        s = sorted(vals)
+        # Nearest-rank percentile -- good enough for a 30-day cohort.
+        i = max(0, min(len(s) - 1, int(round(pct * (len(s) - 1)))))
+        return s[i]
+
+    out: list[ModeCostStat] = []
+    for mode in ReportMode:
+        vals = by_mode.get(mode, [])
+        out.append(ModeCostStat(
+            mode=mode,
+            n=len(vals),
+            median_cost_usd=_percentile(vals, 0.5),
+            p90_cost_usd=_percentile(vals, 0.9),
+        ))
+    return out
 
 
 @router.get("/eta/stage_durations", response_model=list[StageEstimate], dependencies=[Depends(require_auth)])
@@ -545,6 +606,116 @@ def force_fail(report_id: int, session: Session = Depends(get_session)) -> Repor
     report.stage = ReportStage.failed
     report.error = "Force-failed by user"
     session.add(report)
+    session.commit()
+    session.refresh(report)
+    return ReportOut.from_db(report)
+
+
+@router.post(
+    "/{report_id}/rerun_analyst/{slug}",
+    response_model=ReportOut,
+    dependencies=[Depends(require_auth)],
+)
+def rerun_analyst(
+    report_id: int,
+    slug: str,
+    session: Session = Depends(get_session),
+) -> ReportOut:
+    """Re-run a single analyst's draft against their existing notes.
+
+    Triage hook for the parallel-stage timeout case: if one contributor
+    in the draft batch hit the per-call timeout, their section reads
+    `[draft:slug timed out after Ns]` while everyone else's sections
+    landed cleanly. Re-running the whole draft stage works but burns
+    tokens on the analysts who were fine. This route re-does just the
+    one slot, then queues a render-stage job to refresh the PDF.
+
+    Requires the report to have notes-<slug>.md on disk -- if research
+    itself failed for this analyst, /resume from research is the fix."""
+    report = session.get(Report, report_id)
+    if report is None:
+        raise HTTPException(404, "Report not found")
+
+    from api import app_settings
+    from api.agents.cost import CostTracker
+    from api.workflow.audit import audit_hook
+    from api.workflow.state_machine import (
+        _make_analyst,
+        _models_for,
+        _record,
+        _resolved_contributors,
+        working_dir,
+    )
+
+    wd = working_dir(report_id)
+    notes_name = f"notes-{slug}.md"
+    notes_path = wd / notes_name
+    brief_path = wd / "brief.md"
+
+    # Working dir on Railway is ephemeral. Pull missing files back from R2
+    # (uploaded at render time) before deciding the re-run is impossible.
+    for name in (notes_name, "brief.md"):
+        local = wd / name
+        if not local.exists() and storage.object_exists(report_id, name):
+            storage.fetch_to_local(report_id, wd, name)
+
+    if not notes_path.exists():
+        raise HTTPException(
+            400,
+            f"No notes-{slug}.md on disk or in R2. /resume from research to "
+            "rebuild the analyst's notes before re-drafting.",
+        )
+    if not brief_path.exists():
+        raise HTTPException(400, "Brief is missing on disk; can't re-run draft.")
+
+    brief = brief_path.read_text(encoding="utf-8")
+    notes = notes_path.read_text(encoding="utf-8")
+
+    # Sanity: confirm the slug is one of the report's known contributors
+    # so a typo doesn't let us draft for an arbitrary persona.
+    contributors = _resolved_contributors(report, brief)
+    if not any(c["slug"] == slug for c in contributors):
+        raise HTTPException(
+            400,
+            f"`{slug}` isn't a contributor on this report. Known: "
+            + ", ".join(c["slug"] for c in contributors),
+        )
+
+    cap = report.budget_cap_usd or app_settings.cost_per_report_usd()
+    cost = CostTracker(
+        report_cap=cap,
+        day_cap=app_settings.cost_per_day_usd(),
+    )
+    audit = audit_hook(report_id)
+    models = _models_for(report.mode)
+
+    analyst = _make_analyst(slug, cost, audit, models["analyst"])
+    result = analyst.draft(brief, notes, report.theme)
+    if not result.text.strip():
+        raise HTTPException(500, "Draft re-run produced empty output")
+    (wd / f"section-{slug}.md").write_text(result.text, encoding="utf-8")
+    _record(report_id, wd, result)
+
+    # Re-render so the PDF picks up the new section. We push the report
+    # back to render, drop any pending non-render jobs (they'd have run
+    # against the old section), and queue a fresh render job.
+    report.stage = ReportStage.render
+    report.error = None
+    session.add(report)
+
+    pending = session.exec(
+        select(Job).where(
+            Job.report_id == report_id,
+            Job.status == "pending",
+        )
+    ).all()
+    for j in pending:
+        j.status = "failed"
+        j.last_error = "superseded by single-analyst re-run"
+        j.finished_at = datetime.now(UTC)
+        session.add(j)
+
+    session.add(Job(report_id=report_id, stage=ReportStage.render))
     session.commit()
     session.refresh(report)
     return ReportOut.from_db(report)

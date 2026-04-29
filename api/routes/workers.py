@@ -81,6 +81,19 @@ class WorkerErrorInfo(BaseModel):
     captured_at: datetime | None
 
 
+class AuditTailEntry(BaseModel):
+    """One entry in the live audit-log feed shown on /workers. Mirrors
+    the AuditEntry model but is system-wide rather than scoped to a
+    single report."""
+    id: int
+    report_id: int | None
+    actor: str
+    event: str
+    cost_usd: float
+    details: dict[str, object]
+    created_at: datetime
+
+
 class WorkersStatus(BaseModel):
     now: datetime
     last_activity_at: datetime | None
@@ -273,6 +286,38 @@ class EnumSyncResult(BaseModel):
     added: list[str]
     still_missing: list[str]
     error: str | None = None
+
+
+@router.get(
+    "/audit_tail",
+    response_model=list[AuditTailEntry],
+    dependencies=[Depends(require_auth)],
+)
+def audit_tail(
+    limit: int = 50,
+    session: Session = Depends(get_session),
+) -> list[AuditTailEntry]:
+    """Last N audit-log entries across the whole system, newest first.
+
+    The /workers page polls this so the user can watch every model_call,
+    tool_call, rate_limit, stage_complete, etc. fire in near-real-time
+    without having to scroll Railway logs."""
+    capped = max(1, min(limit, 200))
+    rows = session.exec(
+        select(AuditLog).order_by(desc(AuditLog.created_at)).limit(capped)
+    ).all()
+    return [
+        AuditTailEntry(
+            id=r.id or 0,
+            report_id=r.report_id,
+            actor=r.actor,
+            event=r.event,
+            cost_usd=r.cost_usd,
+            details=dict(r.details or {}),
+            created_at=_aware(r.created_at) or r.created_at,
+        )
+        for r in rows
+    ]
 
 
 @router.post(

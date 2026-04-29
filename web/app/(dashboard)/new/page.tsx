@@ -21,6 +21,10 @@ export default function NewReportPage() {
   const [budgetText, setBudgetText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Trailing-30-day actuals per mode -- ground-truth for the confirm
+  // dialog. The hard-coded MODE_ESTIMATES is the fallback when there's
+  // no recent history.
+  const [costStats, setCostStats] = useState<Record<ReportMode, { median: number | null; p90: number | null; n: number }> | null>(null);
   // Files queued client-side; we don't have a report id until commission, so
   // upload happens as a follow-up step right after createReport.
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
@@ -29,6 +33,13 @@ export default function NewReportPage() {
 
   useEffect(() => {
     api.listTeam().then(setTeam).catch(() => { /* ignore — auth-gated */ });
+    api.costStats().then((rows) => {
+      const out = {} as Record<ReportMode, { median: number | null; p90: number | null; n: number }>;
+      for (const r of rows) {
+        out[r.mode] = { median: r.median_cost_usd, p90: r.p90_cost_usd, n: r.n };
+      }
+      setCostStats(out);
+    }).catch(() => { /* ignore */ });
   }, []);
 
   function toggleSlug(slug: string) {
@@ -43,11 +54,19 @@ export default function NewReportPage() {
         throw new Error("Budget must be a positive number");
       }
       const est = MODE_ESTIMATES[mode];
+      const actuals = costStats?.[mode];
       const cap = budget_cap_usd ?? est.cost_hi;
       if (cap >= CONFIRM_THRESHOLD_USD) {
+        // Prefer trailing-30-day actuals when we have at least 3 rows;
+        // below that the estimate is too noisy and the static MODE_
+        // ESTIMATES window is honest about it being a guess.
+        const showActuals = actuals && actuals.n >= 3 && actuals.median != null && actuals.p90 != null;
+        const costLine = showActuals
+          ? `Recent actuals (last 30d, n=${actuals!.n}): median $${actuals!.median!.toFixed(2)}, p90 $${actuals!.p90!.toFixed(2)}`
+          : `Estimated cost: $${est.cost_lo.toFixed(2)}-$${est.cost_hi.toFixed(2)}`;
         const ok = window.confirm(
           `Commission "${theme}" in ${mode} mode?\n\n` +
-          `Estimated cost: $${est.cost_lo.toFixed(2)}-$${est.cost_hi.toFixed(2)}\n` +
+          `${costLine}\n` +
           `Budget cap: $${cap.toFixed(2)}\n` +
           `Estimated runtime: ~${est.minutes} min\n\n` +
           `Click OK to charge it; Cancel to back out.`
