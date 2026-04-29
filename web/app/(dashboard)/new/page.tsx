@@ -4,7 +4,8 @@ import { AuthGate } from "@/components/Auth";
 import { api, MODE_ESTIMATES, type ReportMode, type TeamMember } from "@/lib/api";
 
 const MODES: { value: ReportMode; title: string; tagline: string }[] = [
-  { value: "fast",     title: "Fast (testing)",  tagline: "Haiku end-to-end. No web search. Tight loop. ~$0.05-0.15." },
+  { value: "test",     title: "Test (smoke)",    tagline: "Stripped pipeline, 2 analysts, no charts/rebuttal/redteam/audit. ~$0.02-0.05." },
+  { value: "fast",     title: "Fast",            tagline: "Haiku end-to-end. No web search. Tight loop. ~$0.05-0.15." },
   { value: "standard", title: "Standard",        tagline: "Opus EIC + Sonnet team. Web search on. ~$0.50-1.00." },
   { value: "deep",     title: "Deep dive",       tagline: "Same models as standard, larger token + iter budget. ~$1.50-3.00." },
 ];

@@ -5,11 +5,12 @@ export type ReportStage =
   | "rebuttal" | "redteam" | "edit" | "audit" | "render" | "feedback"
   | "housekeeping" | "done" | "failed" | "cancelled";
 
-export type ReportMode = "fast" | "standard" | "deep";
+export type ReportMode = "test" | "fast" | "standard" | "deep";
 
 // Rough estimates used for the confirm dialog and on-screen ETA. Tuned against
 // real reports; treat as "expected" not guaranteed.
 export const MODE_ESTIMATES: Record<ReportMode, { cost_lo: number; cost_hi: number; minutes: number }> = {
+  test:     { cost_lo: 0.02, cost_hi: 0.05, minutes: 1 },
   fast:     { cost_lo: 0.05, cost_hi: 0.15, minutes: 2 },
   standard: { cost_lo: 0.50, cost_hi: 1.00, minutes: 6 },
   deep:     { cost_lo: 1.50, cost_hi: 3.00, minutes: 12 },

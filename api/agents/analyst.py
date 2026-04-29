@@ -137,11 +137,22 @@ Be opinionated; hedging without conviction is the failure mode. Output ~300-500 
         ]
         if has_uploads and report_id is not None:
             tools.append(uploaded_documents_tool(report_id))
-        # Per-mode tuning. fast: drop web search (biggest cost driver) and
-        # tighten loop. deep: bigger token + iter budget for thorough research.
-        server_tools = [] if mode == ReportMode.fast else [web_search_tool()]
-        max_iters = {ReportMode.fast: 4, ReportMode.standard: 6, ReportMode.deep: 10}[mode]
-        max_tokens = {ReportMode.fast: 2048, ReportMode.standard: 3072, ReportMode.deep: 4096}[mode]
+        # Per-mode tuning. test/fast: drop web search (biggest cost driver)
+        # and tighten the loop hard. deep: bigger token + iter budget for
+        # thorough research.
+        server_tools = [] if mode in (ReportMode.test, ReportMode.fast) else [web_search_tool()]
+        max_iters = {
+            ReportMode.test: 2,
+            ReportMode.fast: 4,
+            ReportMode.standard: 6,
+            ReportMode.deep: 10,
+        }[mode]
+        max_tokens = {
+            ReportMode.test: 1024,
+            ReportMode.fast: 2048,
+            ReportMode.standard: 3072,
+            ReportMode.deep: 4096,
+        }[mode]
         return self.run(
             prompt,
             tools=tools,
