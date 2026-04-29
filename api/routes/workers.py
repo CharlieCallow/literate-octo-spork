@@ -61,6 +61,18 @@ class JobActivity(BaseModel):
     is_stuck: bool  # past deadline -> True
 
 
+class SupervisorStats(BaseModel):
+    """Summary of the in-process supervisor that auto-respawns the worker
+    subprocess on crash. Only populated when BUNDLE_WORKER is on."""
+    enabled: bool
+    crash_count: int = 0
+    consecutive_failures: int = 0
+    last_exit_code: int | None = None
+    last_crash_at: datetime | None = None
+    last_spawn_at: datetime | None = None
+    pid: int | None = None
+
+
 class WorkersStatus(BaseModel):
     now: datetime
     last_activity_at: datetime | None
@@ -72,6 +84,7 @@ class WorkersStatus(BaseModel):
     worker_last_seen_at: datetime | None
     worker_last_seen_seconds_ago: float | None
     worker_alive: bool
+    supervisor: SupervisorStats
     running: list[JobActivity]
     pending: list[JobActivity]
     recent_failures: list[JobActivity]
@@ -182,6 +195,23 @@ def status(session: Session = Depends(get_session)) -> WorkersStatus:
     worker_gap = max(0.0, (now - worker_seen).total_seconds()) if worker_seen else None
     worker_alive = worker_gap is not None and worker_gap < _WORKER_DEAD_AFTER_S
 
+    # Supervisor stats. The supervisor runs in the API process so even when
+    # the worker is dead we can still tell the user "it's crashed N times".
+    from api.workflow.supervisor import current as current_supervisor
+    sv = current_supervisor()
+    if sv is None:
+        supervisor = SupervisorStats(enabled=False)
+    else:
+        supervisor = SupervisorStats(
+            enabled=True,
+            crash_count=sv.stats.crash_count,
+            consecutive_failures=sv.stats.consecutive_failures,
+            last_exit_code=sv.stats.last_exit_code,
+            last_crash_at=_aware(sv.stats.last_crash_at),
+            last_spawn_at=_aware(sv.stats.last_spawn_at),
+            pid=sv.stats.pid,
+        )
+
     def _build(jobs):  # type: ignore[no-untyped-def]
         return [
             _activity(j, reports_by_id.get(j.report_id), now,
@@ -196,6 +226,7 @@ def status(session: Session = Depends(get_session)) -> WorkersStatus:
         worker_last_seen_at=worker_seen,
         worker_last_seen_seconds_ago=worker_gap,
         worker_alive=worker_alive,
+        supervisor=supervisor,
         running=_build(running_jobs),
         pending=_build(pending_jobs),
         recent_failures=_build(recent_failed),

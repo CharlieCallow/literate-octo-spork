@@ -205,11 +205,27 @@ export default function WorkersPage() {
             </span>
           </p>
         )}
+        {data?.supervisor.enabled && (
+          <p style={{ margin: 0, fontSize: 12 }} className="muted">
+            Supervisor: {data.supervisor.crash_count > 0
+              ? <>worker has crashed <strong>{data.supervisor.crash_count}</strong> time(s)
+                {data.supervisor.consecutive_failures > 1 && <> · <strong style={{ color: "#A33" }}>
+                  {data.supervisor.consecutive_failures} consecutive — likely crash loop
+                </strong></>}
+                {data.supervisor.last_exit_code != null &&
+                  <> · last exit code {data.supervisor.last_exit_code}</>}
+                {data.supervisor.last_crash_at &&
+                  <> · last crash {fmtTimestamp(data.supervisor.last_crash_at)}</>}
+              </>
+              : <>no crashes — worker pid {data.supervisor.pid ?? "—"}</>}
+          </p>
+        )}
         {data && !data.worker_alive && (
           <p style={{ margin: 0, color: "#A33" }}>
-            The worker has not written a heartbeat in over 30s. Either the process
-            crashed or it&apos;s wedged. Redeploy the worker on Railway. Pending jobs
-            will resume once a new worker comes up.
+            The worker has not written a heartbeat in over 30s.{" "}
+            {data.supervisor.enabled
+              ? "The supervisor will respawn it automatically; if this persists check Railway logs for a crash loop."
+              : "Bundled supervisor isn't running on this deploy — restart the API service on Railway to recover."}
           </p>
         )}
       </div>

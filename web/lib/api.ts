@@ -170,6 +170,16 @@ export interface JobActivity {
   is_stuck: boolean;
 }
 
+export interface SupervisorStats {
+  enabled: boolean;
+  crash_count: number;
+  consecutive_failures: number;
+  last_exit_code: number | null;
+  last_crash_at: string | null;
+  last_spawn_at: string | null;
+  pid: number | null;
+}
+
 export interface WorkersStatus {
   now: string;
   last_activity_at: string | null;
@@ -177,6 +187,7 @@ export interface WorkersStatus {
   worker_last_seen_at: string | null;
   worker_last_seen_seconds_ago: number | null;
   worker_alive: boolean;
+  supervisor: SupervisorStats;
   running: JobActivity[];
   pending: JobActivity[];
   recent_failures: JobActivity[];
