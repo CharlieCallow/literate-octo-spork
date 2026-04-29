@@ -467,6 +467,19 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         return _next_stage(stage, report.mode)
 
     wd = working_dir(report.id)
+    # Hydrate the working dir from R2 before any stage reads files.
+    # Railway rebuilds wipe the local container fs; without this, a
+    # re-run from `edit` (or any stage after the first) finds no
+    # section-*.md / redteam.md / rebuttals.md inputs and produces an
+    # empty REVISED SECTIONS block, rendering as a cover-only PDF. Skip
+    # for `brief` (the first stage) since there's nothing to hydrate.
+    # No-op when R2 isn't configured or all files are already local.
+    if stage != ReportStage.brief:
+        try:
+            from api import storage
+            storage.hydrate_working_dir(report.id, wd)
+        except Exception:  # noqa: BLE001
+            log.exception("R2 hydrate failed (non-blocking)")
     audit = audit_hook(report.id)
     cost = _tracker(report)
     models = _models_for(report.mode)
