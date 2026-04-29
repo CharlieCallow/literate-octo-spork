@@ -418,6 +418,69 @@ def test_workers_status_includes_pending_and_recent_failures(db, monkeypatch) ->
     assert "APITimeoutError" in (out.recent_failures[0].last_error or "")
 
 
+def test_workers_status_reports_worker_alive_when_recent_heartbeat(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The worker process writes a heartbeat each poll cycle. /workers/status
+    must surface it as `worker_alive=true` when fresh -- this is the signal
+    that distinguishes 'worker idle' from 'worker dead'."""
+    monkeypatch.setattr("api.routes.workers.engine", db, raising=False)
+
+    import api.app_settings as app_settings_mod
+    monkeypatch.setattr(app_settings_mod, "engine", db)
+
+    from api.routes.workers import status
+
+    app_settings_mod.record_worker_heartbeat()
+    with Session(db) as session:
+        out = status(session=session)
+    assert out.worker_alive is True
+    assert out.worker_last_seen_at is not None
+    assert out.worker_last_seen_seconds_ago is not None
+    assert out.worker_last_seen_seconds_ago < 5
+
+
+def test_workers_status_reports_worker_offline_when_heartbeat_stale(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A heartbeat older than the staleness threshold flips worker_alive
+    to false -- the visible signal on the dashboard that the process is
+    dead and a redeploy is needed."""
+    monkeypatch.setattr("api.routes.workers.engine", db, raising=False)
+
+    import api.app_settings as app_settings_mod
+    monkeypatch.setattr(app_settings_mod, "engine", db)
+
+    from api.models import AppSetting
+    from api.routes.workers import status
+
+    long_ago = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
+    with Session(db) as session:
+        session.add(AppSetting(
+            key=app_settings_mod.KEY_WORKER_HEARTBEAT, value=long_ago,
+        ))
+        session.commit()
+
+    with Session(db) as session:
+        out = status(session=session)
+    assert out.worker_alive is False
+    assert out.worker_last_seen_seconds_ago is not None
+    assert out.worker_last_seen_seconds_ago > 60
+
+
+def test_workers_status_reports_worker_offline_when_no_heartbeat(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Fresh deploy / first-ever boot has no heartbeat row at all. Show
+    that as offline rather than crashing or rendering as alive."""
+    monkeypatch.setattr("api.routes.workers.engine", db, raising=False)
+
+    import api.app_settings as app_settings_mod
+    monkeypatch.setattr(app_settings_mod, "engine", db)
+
+    from api.routes.workers import status
+
+    with Session(db) as session:
+        out = status(session=session)
+    assert out.worker_alive is False
+    assert out.worker_last_seen_at is None
+    assert out.worker_last_seen_seconds_ago is None
+
+
 def test_workers_force_fail_endpoint_routes_through_failure_path(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """Per-job force-fail must use the same _handle_failure path as a real
     exception so the next attempt gets queued (within MAX_ATTEMPTS).

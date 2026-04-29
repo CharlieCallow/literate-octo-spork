@@ -174,6 +174,9 @@ export interface WorkersStatus {
   now: string;
   last_activity_at: string | null;
   last_activity_seconds_ago: number | null;
+  worker_last_seen_at: string | null;
+  worker_last_seen_seconds_ago: number | null;
+  worker_alive: boolean;
   running: JobActivity[];
   pending: JobActivity[];
   recent_failures: JobActivity[];
