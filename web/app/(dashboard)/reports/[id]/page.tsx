@@ -64,6 +64,15 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
     try { await api.cancel(report.id); } catch (e) { setError(String(e)); }
   }
 
+  async function forceFail() {
+    if (!report) return;
+    if (!window.confirm(
+      "Force-fail this report? Use this when a stage is stuck and cancel isn't enough. " +
+      "Marks the running job as failed immediately so you can hit Resume.",
+    )) return;
+    try { await api.forceFail(report.id); } catch (e) { setError(String(e)); }
+  }
+
   return (
     <AuthGate>
       <div className="byline">
@@ -108,9 +117,14 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
                 </>
               )}
               {!TERMINAL_STAGES.has(report.stage) && (
-                <button onClick={cancel} style={{ padding: "3px 12px", fontSize: 12, background: "#FFF", color: "var(--forte-ink)", border: "1px solid var(--forte-rule)" }}>
-                  Cancel
-                </button>
+                <>
+                  <button onClick={cancel} style={{ padding: "3px 12px", fontSize: 12, background: "#FFF", color: "var(--forte-ink)", border: "1px solid var(--forte-rule)" }}>
+                    Cancel
+                  </button>
+                  <button onClick={forceFail} title="Force-fail a stuck stage so you can resume" style={{ padding: "3px 12px", fontSize: 12, background: "#FFF", color: "var(--forte-rule)", border: "1px solid var(--forte-rule)" }}>
+                    Force fail
+                  </button>
+                </>
               )}
               {(report.stage === "failed" || report.stage === "cancelled") && (
                 <>

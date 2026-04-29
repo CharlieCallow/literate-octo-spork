@@ -157,15 +157,18 @@ class Agent:
         self.cost = cost
         self.model = model or self.default_model
         self.audit = audit or (lambda _e, _d: None)
-        # max_retries=5 lets the SDK ride out transient 429s with its own
-        # backoff. We add an outer wrapper for 429s that need a longer wait
-        # (per-minute token limits don't clear inside the SDK's window).
-        # An explicit per-call timeout caps a single hung request -- the SDK
+        # max_retries kept small (2) because the SDK retries on transport
+        # timeouts too; with a 120s per-call timeout, max_retries=5 meant a
+        # hung connection could burn 5*120 = 10 minutes inside one call,
+        # exactly the silent-hang failure mode this constructor is supposed
+        # to bound. Two retries handle a transient blip without inviting
+        # multi-minute waits. We add an outer wrapper for 429s separately.
+        # An explicit per-call timeout caps a single request -- the SDK
         # default is 10 minutes which is long enough to silently freeze a
         # whole report when one analyst's call wedges.
         self._client = Anthropic(
             api_key=settings.anthropic_api_key,
-            max_retries=5,
+            max_retries=2,
             timeout=120.0,
         )
 

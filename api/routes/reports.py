@@ -510,6 +510,46 @@ def get_public_chart_json(
     return payload
 
 
+@router.post("/{report_id}/force_fail", response_model=ReportOut, dependencies=[Depends(require_auth)])
+def force_fail(report_id: int, session: Session = Depends(get_session)) -> ReportOut:
+    """Force a stuck report into the `failed` state without waiting for the
+    watchdog deadline.
+
+    The cancel endpoint marks the report cancelled but leaves the running
+    job ticking until the worker notices. force_fail is the triage button
+    you reach for when a stage is hung and you want to clean up RIGHT NOW
+    so /resume can take over: it marks any running job as failed, drops
+    pending jobs, and sets the report stage to failed. After this you can
+    call /resume?from_stage=<stage> from the dashboard to re-run the
+    stuck stage with a fresh attempt counter."""
+    report = session.get(Report, report_id)
+    if not report:
+        raise HTTPException(404, "Report not found")
+    if report.stage in (ReportStage.done, ReportStage.failed, ReportStage.cancelled):
+        raise HTTPException(400, f"Report is already {report.stage}")
+
+    now = datetime.now(UTC)
+    jobs = session.exec(
+        select(Job).where(
+            Job.report_id == report_id,
+            Job.status.in_(("running", "pending")),  # type: ignore[union-attr]
+        )
+    ).all()
+    for j in jobs:
+        j.status = "failed"
+        j.last_error = "Force-failed by user"
+        if j.finished_at is None:
+            j.finished_at = now
+        session.add(j)
+
+    report.stage = ReportStage.failed
+    report.error = "Force-failed by user"
+    session.add(report)
+    session.commit()
+    session.refresh(report)
+    return ReportOut.from_db(report)
+
+
 @router.post("/{report_id}/cancel", response_model=ReportOut, dependencies=[Depends(require_auth)])
 def cancel(report_id: int, session: Session = Depends(get_session)) -> ReportOut:
     """Mark a running report as cancelled. The worker checks this flag before
