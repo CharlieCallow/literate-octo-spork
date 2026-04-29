@@ -323,6 +323,7 @@ export interface ReadingMode {
   house_view_top: string | null;
   house_view_bottom: string | null;
   sections: ReadingSection[];
+  glossary_html?: string | null;
   sources: ReadingSource[];
   created_at: string;
 }

@@ -43,6 +43,13 @@
 </div>
 {% endif %}
 
+{% if glossary_html %}
+<section class="glossary">
+  <h2>Glossary</h2>
+  {{ glossary_html | safe }}
+</section>
+{% endif %}
+
 {% if sources %}
 <section class="sources">
   <h2>Sources</h2>

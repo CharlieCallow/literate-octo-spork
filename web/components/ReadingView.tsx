@@ -71,6 +71,13 @@ export function ReadingView({
         </div>
       )}
 
+      {data.glossary_html && (
+        <section className="reading-section reading-glossary">
+          <h2>Glossary</h2>
+          <div className="reading-body" dangerouslySetInnerHTML={{ __html: data.glossary_html }} />
+        </section>
+      )}
+
       {data.sources.length > 0 && (
         <section className="reading-sources">
           <h2>Sources</h2>
