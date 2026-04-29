@@ -230,6 +230,29 @@ export default function WorkersPage() {
         )}
       </div>
 
+      {data?.worker_last_error && (
+        <div className="card" style={{ borderLeft: "3px solid #A33" }}>
+          <h2 style={{ marginTop: 0, color: "#A33", fontSize: 16 }}>
+            Last unhandled worker error
+          </h2>
+          <p style={{ margin: "4px 0 8px", fontSize: 12 }} className="muted">
+            Captured at {fmtTimestamp(data.worker_last_error.captured_at)}.
+            The poll loop now logs and continues rather than crashing — but
+            this is the traceback. Triage at the source rather than rolling
+            the dice on retries.
+          </p>
+          <pre style={{
+            fontSize: 11, lineHeight: 1.4,
+            background: "#FAF7F0", color: "var(--forte-ink)",
+            padding: "8px 12px", borderRadius: 4,
+            overflowX: "auto", maxHeight: 320,
+            whiteSpace: "pre-wrap",
+          }}>
+            {data.worker_last_error.message}
+          </pre>
+        </div>
+      )}
+
       {error && <div className="card"><p style={{ color: "#A33" }}>{error}</p></div>}
 
       {data && (

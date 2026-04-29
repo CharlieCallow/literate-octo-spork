@@ -11,6 +11,7 @@ import contextlib
 import logging
 import signal
 import time
+import traceback
 from datetime import UTC, datetime, timedelta
 from types import FrameType
 
@@ -92,36 +93,62 @@ def main() -> None:
         signal.signal(signal.SIGTERM, _request_shutdown)  # not on Windows main thread
 
     while not _should_stop:
-        # Heartbeat first -- if the rest of the loop blows up, at least
-        # the dashboard sees the worker is alive. Cheap upsert.
-        app_settings.record_worker_heartbeat()
-
-        # Watchdog runs every poll: jobs left in `running` past their
-        # mode-specific deadline are routed through the failure path so
-        # the same backoff-and-retry logic that handles real exceptions
-        # picks them up. Cheap (one indexed query). Catches the case
-        # where the previous worker died mid-job.
         try:
-            n = reclaim_stuck_jobs()
-            if n:
-                log.warning("watchdog reclaimed %d stuck job(s)", n)
-        except Exception:  # noqa: BLE001
-            log.exception("watchdog reclaim_stuck_jobs failed (non-blocking)")
-
-        job = claim_one_job()
-        if job is None:
-            _maybe_run_scheduled_scout(log)
-            _maybe_grade_calls(log)
-            for _ in range(int(POLL_INTERVAL_S * 10)):
+            _poll_iter(log)
+        except Exception as e:  # noqa: BLE001
+            # Anything escaping execute() / claim_one_job() / the watchdog
+            # used to crash the worker process; the supervisor would
+            # respawn it but the report would lose its place. Capture and
+            # continue so a single bad iteration is visible on /workers
+            # without taking the whole worker down.
+            tb = traceback.format_exc()
+            log.exception("unhandled exception in poll loop -- continuing")
+            with contextlib.suppress(Exception):
+                app_settings.record_worker_error(
+                    f"{type(e).__name__}: {e}\n\n{tb}"
+                )
+            # Brief sleep so a pathological repeat exception doesn't
+            # spin the CPU; respect the shutdown signal.
+            for _ in range(20):  # ~2s
                 if _should_stop:
                     break
                 time.sleep(0.1)
-            continue
-        log.info("running stage=%s report=%s job=%s attempt=%d",
-                 job.stage, job.report_id, job.id, job.attempts)
-        execute(job)
 
     log.info("worker stopped cleanly")
+
+
+def _poll_iter(log: logging.Logger) -> None:
+    """One iteration of the worker's main loop. Lifted out of main() so
+    the outer try/except can keep the process alive even when something
+    deep in the runner / DB layer raises unexpectedly."""
+    # Heartbeat first -- if the rest of the loop blows up, at least
+    # the dashboard sees the worker is alive. Cheap upsert.
+    app_settings.record_worker_heartbeat()
+
+    # Watchdog runs every poll: jobs left in `running` past their
+    # mode-specific deadline are routed through the failure path so
+    # the same backoff-and-retry logic that handles real exceptions
+    # picks them up. Cheap (one indexed query). Catches the case
+    # where the previous worker died mid-job.
+    try:
+        n = reclaim_stuck_jobs()
+        if n:
+            log.warning("watchdog reclaimed %d stuck job(s)", n)
+    except Exception:  # noqa: BLE001
+        log.exception("watchdog reclaim_stuck_jobs failed (non-blocking)")
+
+    job = claim_one_job()
+    if job is None:
+        _maybe_run_scheduled_scout(log)
+        _maybe_grade_calls(log)
+        for _ in range(int(POLL_INTERVAL_S * 10)):
+            if _should_stop:
+                break
+            time.sleep(0.1)
+        return
+    log.info("running stage=%s report=%s job=%s attempt=%d",
+             job.stage, job.report_id, job.id, job.attempts)
+    execute(job)
 
 
 if __name__ == "__main__":

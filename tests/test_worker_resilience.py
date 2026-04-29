@@ -724,6 +724,63 @@ def test_run_concurrently_caps_max_workers() -> None:
     assert peak <= 3, f"expected peak<=3, got {peak}"
 
 
+# ----------------------------------------------------------------------
+# Worker poll-loop crash capture
+# ----------------------------------------------------------------------
+
+def test_workers_status_surfaces_persisted_worker_error(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """When the worker poll loop catches an unhandled exception it should
+    persist the traceback so /workers can render it without the user
+    digging through Railway logs."""
+    monkeypatch.setattr("api.routes.workers.engine", db, raising=False)
+
+    import api.app_settings as app_settings_mod
+    monkeypatch.setattr(app_settings_mod, "engine", db)
+
+    from api.routes.workers import status
+
+    app_settings_mod.record_worker_error(
+        "ValueError: something exploded\n\n  File 'state_machine.py', line 42"
+    )
+
+    with Session(db) as session:
+        out = status(session=session)
+    assert out.worker_last_error is not None
+    assert "ValueError" in out.worker_last_error.message
+    assert "state_machine.py" in out.worker_last_error.message
+    assert out.worker_last_error.captured_at is not None
+
+
+def test_workers_status_no_worker_error_when_clean(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """If nothing's been recorded, the field is None -- the dashboard
+    should hide the error card entirely rather than render an empty box."""
+    monkeypatch.setattr("api.routes.workers.engine", db, raising=False)
+
+    import api.app_settings as app_settings_mod
+    monkeypatch.setattr(app_settings_mod, "engine", db)
+
+    from api.routes.workers import status
+
+    with Session(db) as session:
+        out = status(session=session)
+    assert out.worker_last_error is None
+
+
+def test_record_worker_error_caps_message_length(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A pathologically deep traceback shouldn't blow up the AppSetting
+    row past Postgres' default text-column comfort zone."""
+    import api.app_settings as app_settings_mod
+    monkeypatch.setattr(app_settings_mod, "engine", db)
+
+    huge = "X" * 100_000
+    app_settings_mod.record_worker_error(huge)
+
+    out = app_settings_mod.worker_last_error()
+    assert out is not None
+    msg, _ = out
+    assert len(msg) <= 6000
+
+
 def test_workers_force_fail_endpoint_routes_through_failure_path(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """Per-job force-fail must use the same _handle_failure path as a real
     exception so the next attempt gets queued (within MAX_ATTEMPTS).
