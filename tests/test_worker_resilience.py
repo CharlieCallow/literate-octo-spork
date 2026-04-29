@@ -781,6 +781,84 @@ def test_record_worker_error_caps_message_length(db, monkeypatch) -> None:  # ty
     assert len(msg) <= 6000
 
 
+def test_persist_crash_writes_to_file_fallback(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Even when the DB write path is broken, the fallback file should
+    still receive the crash payload. That's the whole point of the
+    belt-and-braces design -- a DB-layer bug that crashes the worker
+    can't also silently swallow its own traceback."""
+    import api.workflow.worker as worker_mod
+
+    crash_file = tmp_path / "crash.txt"
+    monkeypatch.setattr(worker_mod, "_CRASH_FILE", crash_file)
+    # Make the AppSetting write fail to simulate "DB is the thing that
+    # broke" -- the file should still get written.
+    monkeypatch.setattr(
+        worker_mod.app_settings, "record_worker_error",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("DB down")),
+    )
+
+    worker_mod._persist_crash("synthetic crash payload")
+    assert crash_file.exists()
+    assert "synthetic crash payload" in crash_file.read_text()
+
+
+def test_read_crash_file_returns_none_when_absent(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """No crash recorded yet -> None, not an exception. /workers should
+    render no error card in this case."""
+    import api.workflow.worker as worker_mod
+
+    monkeypatch.setattr(worker_mod, "_CRASH_FILE", tmp_path / "nope.txt")
+    assert worker_mod.read_crash_file() is None
+
+
+def test_workers_status_falls_back_to_crash_file_when_appsetting_empty(
+    db, monkeypatch, tmp_path,  # type: ignore[no-untyped-def]
+) -> None:
+    """If the AppSetting persist failed (the DB-layer crash case), the
+    /workers/status endpoint must still surface the file-fallback so the
+    user has a traceback to look at."""
+    monkeypatch.setattr("api.routes.workers.engine", db, raising=False)
+
+    import api.app_settings as app_settings_mod
+    import api.workflow.worker as worker_mod
+    monkeypatch.setattr(app_settings_mod, "engine", db)
+    crash_file = tmp_path / "crash.txt"
+    crash_file.write_text("file-fallback traceback content")
+    monkeypatch.setattr(worker_mod, "_CRASH_FILE", crash_file)
+
+    from api.routes.workers import status
+    with Session(db) as session:
+        out = status(session=session)
+    assert out.worker_last_error is not None
+    assert "file-fallback traceback content" in out.worker_last_error.message
+
+
+def test_excepthook_persists_main_thread_exception(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The sys.excepthook is the only thing that catches a crash at
+    worker startup -- before init_db, before the poll loop, anywhere
+    outside our explicit try/except. Confirm it actually persists the
+    payload via the same _persist_crash path."""
+    import api.workflow.worker as worker_mod
+
+    crash_file = tmp_path / "crash.txt"
+    monkeypatch.setattr(worker_mod, "_CRASH_FILE", crash_file)
+    monkeypatch.setattr(
+        worker_mod.app_settings, "record_worker_error", lambda _m: None,
+    )
+
+    try:
+        raise ValueError("boom at startup")
+    except ValueError:
+        import sys
+        worker_mod._excepthook(*sys.exc_info())  # type: ignore[arg-type]
+
+    assert crash_file.exists()
+    body = crash_file.read_text()
+    assert "ValueError" in body
+    assert "boom at startup" in body
+    assert "main-thread uncaught" in body
+
+
 def test_workers_force_fail_endpoint_routes_through_failure_path(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """Per-job force-fail must use the same _handle_failure path as a real
     exception so the next attempt gets queued (within MAX_ATTEMPTS).
