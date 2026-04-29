@@ -21,6 +21,7 @@ KEY_MODEL_SONNET: Final = "model_sonnet"
 KEY_MODEL_OPUS: Final = "model_opus"
 KEY_COST_PER_REPORT: Final = "cost_per_report_usd"
 KEY_COST_PER_DAY: Final = "cost_per_day_usd"
+KEY_WORKER_HEARTBEAT: Final = "worker_heartbeat_iso"
 
 KNOWN_KEYS: tuple[str, ...] = (
     KEY_MODEL_HAIKU, KEY_MODEL_SONNET, KEY_MODEL_OPUS,
@@ -94,3 +95,39 @@ def all_settings() -> dict[str, str]:
         KEY_COST_PER_REPORT: str(cost_per_report_usd()),
         KEY_COST_PER_DAY: str(cost_per_day_usd()),
     }
+
+
+# ---------------------------------------------------------------------------
+# Worker heartbeat
+# ---------------------------------------------------------------------------
+# The worker writes this each poll cycle so the dashboard can distinguish
+# "worker alive but no work to do" from "worker process is dead". The
+# AuditLog `last_activity` only ticks when an agent emits an event, which
+# doesn't happen when the worker is idle -- so we need a separate signal.
+
+def record_worker_heartbeat() -> None:
+    """Stamp the current UTC time as the worker's last-seen timestamp.
+
+    Best-effort -- a DB blip shouldn't take the worker down. If the
+    upsert fails we log it and move on; the next iteration tries again."""
+    try:
+        set(KEY_WORKER_HEARTBEAT, datetime.now(UTC).isoformat())
+    except Exception:  # noqa: BLE001
+        import logging
+        logging.getLogger("worker").warning(
+            "heartbeat write failed -- /workers will report worker as offline",
+            exc_info=True,
+        )
+
+
+def worker_last_seen() -> datetime | None:
+    """Return the worker's most recent heartbeat as a tz-aware datetime,
+    or None if the worker has never written one."""
+    raw = get(KEY_WORKER_HEARTBEAT, "")
+    if not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)

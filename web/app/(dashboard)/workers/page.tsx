@@ -163,27 +163,55 @@ export default function WorkersPage() {
         during a running stage — the silent-hang signal.
       </p>
 
-      <div className="card" style={{ display: "flex", gap: 12, alignItems: "center" }}>
-        {data?.last_activity_at ? (
-          <p style={{ margin: 0 }}>
-            Last worker activity:{" "}
-            <strong>{fmtDuration(data.last_activity_seconds_ago)} ago</strong>{" "}
-            <span className="muted" style={{ fontSize: 12 }}>
+      <div className="card" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          {data ? (
+            <p style={{ margin: 0 }}>
+              Worker process:{" "}
+              <strong style={{ color: data.worker_alive ? "var(--forte-navy)" : "#A33" }}>
+                {data.worker_alive ? "alive" : "OFFLINE"}
+              </strong>
+              {data.worker_last_seen_at ? (
+                <>
+                  {" "}— last heartbeat{" "}
+                  <strong>{fmtDuration(data.worker_last_seen_seconds_ago)} ago</strong>{" "}
+                  <span className="muted" style={{ fontSize: 12 }}>
+                    ({fmtTimestamp(data.worker_last_seen_at)})
+                  </span>
+                </>
+              ) : (
+                <span className="muted"> — no heartbeat recorded yet</span>
+              )}
+            </p>
+          ) : (
+            <p style={{ margin: 0 }} className="muted">Loading worker state…</p>
+          )}
+          <button
+            onClick={() => setPaused((p) => !p)}
+            style={{ marginLeft: "auto", padding: "3px 12px", fontSize: 12 }}
+          >
+            {paused ? "Resume polling" : "Pause polling"}
+          </button>
+          <button onClick={refresh} style={{ padding: "3px 12px", fontSize: 12 }}>
+            Refresh now
+          </button>
+        </div>
+        {data?.last_activity_at && (
+          <p style={{ margin: 0 }} className="muted" >
+            Last agent activity:{" "}
+            {fmtDuration(data.last_activity_seconds_ago)} ago{" "}
+            <span style={{ fontSize: 12 }}>
               ({fmtTimestamp(data.last_activity_at)})
             </span>
           </p>
-        ) : (
-          <p style={{ margin: 0 }} className="muted">No audit log activity recorded yet.</p>
         )}
-        <button
-          onClick={() => setPaused((p) => !p)}
-          style={{ marginLeft: "auto", padding: "3px 12px", fontSize: 12 }}
-        >
-          {paused ? "Resume polling" : "Pause polling"}
-        </button>
-        <button onClick={refresh} style={{ padding: "3px 12px", fontSize: 12 }}>
-          Refresh now
-        </button>
+        {data && !data.worker_alive && (
+          <p style={{ margin: 0, color: "#A33" }}>
+            The worker has not written a heartbeat in over 30s. Either the process
+            crashed or it&apos;s wedged. Redeploy the worker on Railway. Pending jobs
+            will resume once a new worker comes up.
+          </p>
+        )}
       </div>
 
       {error && <div className="card"><p style={{ color: "#A33" }}>{error}</p></div>}

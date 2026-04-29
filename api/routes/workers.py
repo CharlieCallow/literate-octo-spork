@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy import desc
 from sqlmodel import Session, select
 
+from api import app_settings
 from api.auth import require_auth
 from api.db import get_session
 from api.models import AuditLog, Job, Report, ReportMode, ReportStage
@@ -23,6 +24,12 @@ from api.workflow.runner import (
     STUCK_JOB_DEADLINE_S,
     _handle_failure,
 )
+
+# Heartbeat staleness threshold. Worker writes one each poll cycle (3s).
+# 30s gives plenty of slack for a slow DB write or a pause inside a stage
+# while still catching a dead process before the user has burned 5 min
+# wondering why nothing's happening.
+_WORKER_DEAD_AFTER_S = 30.0
 
 router = APIRouter(prefix="/workers", tags=["workers"])
 
@@ -58,6 +65,13 @@ class WorkersStatus(BaseModel):
     now: datetime
     last_activity_at: datetime | None
     last_activity_seconds_ago: float | None
+    # Worker-process liveness, distinct from agent activity. The worker
+    # writes a heartbeat each poll cycle so we can tell "alive but idle"
+    # apart from "process is dead". `worker_alive=False` means the
+    # heartbeat is missing or stale past _WORKER_DEAD_AFTER_S.
+    worker_last_seen_at: datetime | None
+    worker_last_seen_seconds_ago: float | None
+    worker_alive: bool
     running: list[JobActivity]
     pending: list[JobActivity]
     recent_failures: list[JobActivity]
@@ -164,6 +178,10 @@ def status(session: Session = Depends(get_session)) -> WorkersStatus:
     last_at = _aware(last_overall_event.created_at) if last_overall_event else None
     last_gap = max(0.0, (now - last_at).total_seconds()) if last_at else None
 
+    worker_seen = app_settings.worker_last_seen()
+    worker_gap = max(0.0, (now - worker_seen).total_seconds()) if worker_seen else None
+    worker_alive = worker_gap is not None and worker_gap < _WORKER_DEAD_AFTER_S
+
     def _build(jobs):  # type: ignore[no-untyped-def]
         return [
             _activity(j, reports_by_id.get(j.report_id), now,
@@ -175,6 +193,9 @@ def status(session: Session = Depends(get_session)) -> WorkersStatus:
         now=now,
         last_activity_at=last_at,
         last_activity_seconds_ago=last_gap,
+        worker_last_seen_at=worker_seen,
+        worker_last_seen_seconds_ago=worker_gap,
+        worker_alive=worker_alive,
         running=_build(running_jobs),
         pending=_build(pending_jobs),
         recent_failures=_build(recent_failed),

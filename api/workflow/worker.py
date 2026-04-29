@@ -14,6 +14,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from types import FrameType
 
+from api import app_settings
 from api.db import init_db
 from api.scout_runner import parse_hhmm, run_scout, should_run_today
 from api.settings import settings
@@ -91,6 +92,10 @@ def main() -> None:
         signal.signal(signal.SIGTERM, _request_shutdown)  # not on Windows main thread
 
     while not _should_stop:
+        # Heartbeat first -- if the rest of the loop blows up, at least
+        # the dashboard sees the worker is alive. Cheap upsert.
+        app_settings.record_worker_heartbeat()
+
         # Watchdog runs every poll: jobs left in `running` past their
         # mode-specific deadline are routed through the failure path so
         # the same backoff-and-retry logic that handles real exceptions
