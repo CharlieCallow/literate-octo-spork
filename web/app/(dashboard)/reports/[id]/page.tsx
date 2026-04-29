@@ -150,10 +150,26 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
                   >
                     Clean slate
                   </button>
+                </>
+              )}
+              {/* Re-run controls work on failed/cancelled AND done reports.
+                   On done reports the user has to pick a specific stage --
+                   the backend rejects an unspecified resume to stop them
+                   accidentally restarting the whole pipeline. */}
+              {(report.stage === "failed" || report.stage === "cancelled" || report.stage === "done") && (
+                <>
                   <details style={{ display: "inline-block" }}>
                     <summary style={{ cursor: "pointer", fontSize: 12, color: "var(--forte-purple)" }}>
                       Re-run from…
                     </summary>
+                    {report.stage === "done" && (
+                      <div style={{ marginTop: 6, fontSize: 11, color: "var(--forte-muted)", maxWidth: 360 }}>
+                        Re-runs this stage and everything after it on a finished
+                        report. Idempotent -- the stage&apos;s output overwrites
+                        the previous one. Use this to fix a truncated edit, refresh
+                        charts, or re-run housekeeping that failed silently.
+                      </div>
+                    )}
                     <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
                       {RESUME_FROM_STAGES.map((s) => (
                         <button
