@@ -24,6 +24,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 def test_eic_edit_uses_high_max_tokens_to_avoid_truncation() -> None:
     """A 4096-token cap was the smoking gun. Pin the new cap so a
@@ -158,6 +160,112 @@ def test_render_pdf_glossary_lands_between_bottom_and_sources(tmp_path: Path) ->
         f"expected bottom < glossary < sources, got "
         f"bottom={bottom_idx}, glossary={glossary_idx}, sources={sources_idx}"
     )
+
+
+# ----------------------------------------------------------------------
+# Resume on done reports
+# ----------------------------------------------------------------------
+
+def test_resume_done_report_requires_explicit_from_stage() -> None:
+    """A finished report shouldn't resume from the last queued job (which
+    is `done`) -- that would either no-op or fall back to brief and
+    silently re-run the whole pipeline. Force the user to pick a stage."""
+    from fastapi import HTTPException
+    from sqlmodel import Session, SQLModel, create_engine
+
+    import api.db
+    from api.models import Report, ReportStage
+    from api.routes.reports import resume
+
+    engine = create_engine("sqlite://")
+    SQLModel.metadata.create_all(engine)
+    api.db.engine = engine
+
+    with Session(engine) as session:
+        r = Report(theme="t", stage=ReportStage.done, pdf_path="/tmp/x.pdf")
+        session.add(r)
+        session.commit()
+        session.refresh(r)
+        rid = r.id
+
+    with Session(engine) as session, pytest.raises(HTTPException) as exc:  # type: ignore[call-overload]
+        resume(rid, from_stage=None, clean_slate=False, session=session)
+    assert exc.value.status_code == 400
+    assert "from_stage" in exc.value.detail
+
+
+def test_resume_done_report_with_from_stage_supersedes_pending_jobs() -> None:
+    """When the user picks a stage to re-run on a done report, any
+    leftover pending jobs from the original run must get cancelled --
+    otherwise the worker could pick up an old `done` job and stamp the
+    report back to done before the new stage even runs."""
+    from sqlmodel import Session, SQLModel, create_engine
+
+    import api.db
+    from api.models import Job, Report, ReportStage
+    from api.routes.reports import resume
+
+    engine = create_engine("sqlite://")
+    SQLModel.metadata.create_all(engine)
+    api.db.engine = engine
+
+    with Session(engine) as session:
+        r = Report(theme="t", stage=ReportStage.done, pdf_path="/tmp/x.pdf")
+        session.add(r)
+        session.commit()
+        session.refresh(r)
+        rid = r.id
+        # An old pending job from the original run -- the runner could
+        # still claim it if we don't supersede.
+        session.add(Job(
+            report_id=rid, stage=ReportStage.housekeeping,
+            status="pending", attempts=0,
+        ))
+        session.commit()
+
+    with Session(engine) as session:
+        out = resume(rid, from_stage=ReportStage.edit, clean_slate=False, session=session)
+
+    assert out.stage == ReportStage.edit
+    with Session(engine) as session:
+        # The new edit job is pending. The old housekeeping job got
+        # superseded.
+        from sqlmodel import select
+        all_jobs = session.exec(
+            select(Job).where(Job.report_id == rid)
+        ).all()
+        statuses_for_stage = {(j.stage, j.status) for j in all_jobs}
+        assert (ReportStage.edit, "pending") in statuses_for_stage
+        # The housekeeping job is now failed (superseded).
+        assert (ReportStage.housekeeping, "failed") in statuses_for_stage
+
+
+def test_resume_in_flight_report_rejected() -> None:
+    """A report mid-pipeline (queued / brief / draft / etc) shouldn't be
+    resumable -- you'd end up with two workers fighting over the same
+    stage. Cancel or force-fail first."""
+    from fastapi import HTTPException
+    from sqlmodel import Session, SQLModel, create_engine
+
+    import api.db
+    from api.models import Report, ReportStage
+    from api.routes.reports import resume
+
+    engine = create_engine("sqlite://")
+    SQLModel.metadata.create_all(engine)
+    api.db.engine = engine
+
+    with Session(engine) as session:
+        r = Report(theme="t", stage=ReportStage.draft)
+        session.add(r)
+        session.commit()
+        session.refresh(r)
+        rid = r.id
+
+    with Session(engine) as session, pytest.raises(HTTPException) as exc:  # type: ignore[call-overload]
+        resume(rid, from_stage=ReportStage.draft, clean_slate=False, session=session)
+    assert exc.value.status_code == 400
+    assert "in flight" in exc.value.detail
 
 
 def test_render_pdf_omits_glossary_when_none(tmp_path: Path) -> None:

@@ -373,19 +373,40 @@ def resume(
     clean_slate: bool = False,
     session: Session = Depends(get_session),
 ) -> ReportOut:
-    """Re-queue a failed or cancelled report. By default resumes from the last
-    attempted stage; pass ?from_stage=research (or any earlier stage) to redo
-    work from there. ?clean_slate=true wipes the working directory first so
-    no stale artifacts remain. Workflow stages are idempotent."""
+    """Re-queue a report from a specific stage.
+
+    Allowed when the report is failed / cancelled (any stage), or done
+    (must specify `from_stage` so you can't accidentally restart a
+    finished report from `brief` and burn the whole pipeline). The most
+    common done-report use case is re-running `edit` after spotting a
+    truncated DISAGREEMENT or running `housekeeping` if it failed
+    silently. Workflow stages are idempotent so a re-run overwrites
+    that stage's output without disturbing earlier ones."""
     report = session.get(Report, report_id)
     if not report:
         raise HTTPException(404, "Report not found")
-    # Resume is allowed for failed/cancelled reports, and also for done reports
-    # whose files have been wiped (Railway rebuild) -- in that case the user
-    # explicitly chose to re-run via the "Re-run from brief" UI.
-    pdf_missing = report.stage == ReportStage.done and not report.pdf_path
-    if report.stage not in (ReportStage.failed, ReportStage.cancelled) and not pdf_missing:
-        raise HTTPException(400, f"Report is not failed/cancelled (stage={report.stage})")
+
+    if report.stage in (ReportStage.failed, ReportStage.cancelled):
+        # Free resume from anywhere -- the report's broken either way.
+        pass
+    elif report.stage == ReportStage.done:
+        # Must pin a stage. Otherwise hitting Resume on a finished
+        # report would re-run from the last queued job (typically
+        # `done` itself) which is meaningless, or fall back to `brief`
+        # and silently spend $1 redoing everything.
+        if from_stage is None:
+            raise HTTPException(
+                400,
+                "Resuming a done report needs ?from_stage=<stage>. "
+                "Pick the specific stage you want to re-run "
+                "(e.g. edit, render, housekeeping).",
+            )
+    else:
+        raise HTTPException(
+            400,
+            f"Report is in flight (stage={report.stage}). Cancel or "
+            "force-fail it first, then resume.",
+        )
 
     if from_stage is not None:
         if from_stage in (ReportStage.queued, ReportStage.done, ReportStage.failed, ReportStage.cancelled):
@@ -407,6 +428,21 @@ def resume(
             shutil.rmtree(wd)
         # Also clear pdf_path so the dashboard stops showing the old one.
         report.pdf_path = None
+
+    # Drop any pending jobs so the new resume_stage job is the only
+    # work waiting -- otherwise an old queued `done` job from the prior
+    # run could stomp the resumed report back to done.
+    pending = session.exec(
+        select(Job).where(
+            Job.report_id == report_id,
+            Job.status == "pending",
+        )
+    ).all()
+    for j in pending:
+        j.status = "failed"
+        j.last_error = "superseded by /resume"
+        j.finished_at = datetime.now(UTC)
+        session.add(j)
 
     report.stage = resume_stage
     report.error = None
