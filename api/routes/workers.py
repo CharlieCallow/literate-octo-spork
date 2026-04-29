@@ -204,11 +204,27 @@ def status(session: Session = Depends(get_session)) -> WorkersStatus:
     worker_gap = max(0.0, (now - worker_seen).total_seconds()) if worker_seen else None
     worker_alive = worker_gap is not None and worker_gap < _WORKER_DEAD_AFTER_S
 
+    worker_last_error: WorkerErrorInfo | None = None
     last_err = app_settings.worker_last_error()
-    worker_last_error = (
-        WorkerErrorInfo(message=last_err[0], captured_at=_aware(last_err[1]))
-        if last_err else None
-    )
+    if last_err:
+        worker_last_error = WorkerErrorInfo(
+            message=last_err[0], captured_at=_aware(last_err[1]),
+        )
+    else:
+        # Fallback: the worker writes to a /tmp file too, so a crash in
+        # the DB-write path itself still surfaces here. Only relevant on
+        # the bundled-worker deploy where the file is on the same
+        # filesystem; on a two-service deploy the worker's /tmp isn't
+        # visible to the API and this returns None, which is fine.
+        try:
+            from api.workflow.worker import read_crash_file
+            file_msg = read_crash_file()
+            if file_msg:
+                worker_last_error = WorkerErrorInfo(
+                    message=file_msg, captured_at=None,
+                )
+        except Exception:  # noqa: BLE001
+            pass
 
     # Supervisor stats. The supervisor runs in the API process so even when
     # the worker is dead we can still tell the user "it's crashed N times".
