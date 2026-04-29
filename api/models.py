@@ -48,6 +48,12 @@ class Report(SQLModel, table=True):
     theme: str
     subtitle: str | None = None
     mode: ReportMode = Field(default=ReportMode.standard)
+    # Test-mode runs are throwaway smoke tests -- exclude them from the
+    # firm's memory: Scout's "past reports" anchor, the Archive default
+    # view, the performance ledger, and house-view updates. Set to True
+    # automatically when mode == ReportMode.test, or by hand for any
+    # report you want to keep out of the historical record.
+    is_test: bool = Field(default=False, index=True)
     budget_cap_usd: float | None = None  # overrides settings.cost_per_report_usd if set
     team_override: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
     contributor_slugs: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))

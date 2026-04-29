@@ -73,6 +73,15 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
     try { await api.forceFail(report.id); } catch (e) { setError(String(e)); }
   }
 
+  async function rerunAnalyst(slug: string) {
+    if (!report) return;
+    if (!window.confirm(
+      `Re-run draft for "${slug}"? Uses their existing notes and overwrites their section. ` +
+      "Re-renders the PDF afterwards. Other analysts' sections are not touched.",
+    )) return;
+    try { await api.rerunAnalyst(report.id, slug); } catch (e) { setError(String(e)); }
+  }
+
   return (
     <AuthGate>
       <div className="byline">
@@ -157,6 +166,29 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
                       ))}
                     </div>
                   </details>
+                  {(report.contributor_slugs?.length ?? 0) > 0 && (
+                    <details style={{ display: "inline-block" }}>
+                      <summary style={{ cursor: "pointer", fontSize: 12, color: "var(--forte-purple)" }}>
+                        Re-run one analyst…
+                      </summary>
+                      <div style={{ marginTop: 6, fontSize: 11, color: "var(--forte-muted)", maxWidth: 360 }}>
+                        Redoes just this analyst&apos;s draft against their existing
+                        notes, then re-renders. Use when one slot timed out and
+                        the rest of the team finished cleanly.
+                      </div>
+                      <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+                        {(report.contributor_slugs ?? []).map((s) => (
+                          <button
+                            key={s}
+                            onClick={() => rerunAnalyst(s)}
+                            style={{ padding: "2px 8px", fontSize: 11, background: "#FFF", color: "var(--forte-ink)", border: "1px solid var(--forte-rule)" }}
+                          >
+                            {s}
+                          </button>
+                        ))}
+                      </div>
+                    </details>
+                  )}
                 </>
               )}
             </div>

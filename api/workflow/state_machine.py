@@ -149,11 +149,15 @@ def _today_spent() -> float:
 
 def _past_reports_summary(*, exclude_id: int | None = None, limit: int = 12) -> list[dict[str, str]]:
     """List of recent done-stage reports, most recent first, used to anchor the
-    EIC so it doesn't fabricate a history of prior reports."""
+    EIC so it doesn't fabricate a history of prior reports.
+
+    Excludes `is_test` rows -- test-mode smoke runs aren't real reports
+    and shouldn't shape the Scout's view of what the firm has covered."""
     with Session(engine) as session:
         rows = session.exec(
             select(Report)
             .where(Report.stage == ReportStage.done)
+            .where(Report.is_test == False)  # noqa: E712
             .order_by(Report.created_at.desc())  # type: ignore[attr-defined]
             .limit(limit + 1)  # +1 to absorb exclusion
         ).all()

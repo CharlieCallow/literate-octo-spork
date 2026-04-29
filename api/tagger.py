@@ -120,6 +120,7 @@ def recent_themes(limit_reports: int = 8) -> list[str]:
         rows = session.exec(
             select(Report)
             .where(Report.stage == ReportStage.done)
+            .where(Report.is_test == False)  # noqa: E712 -- skip throwaway smoke runs
             .order_by(Report.created_at.desc())  # type: ignore[attr-defined]
             .limit(limit_reports)
         ).all()

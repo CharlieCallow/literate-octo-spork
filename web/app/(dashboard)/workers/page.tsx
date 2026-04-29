@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { AuthGate } from "@/components/Auth";
-import { api, type EnumSyncResult, type JobActivity, type WorkersStatus } from "@/lib/api";
+import { api, type AuditTailEntry, type EnumSyncResult, type JobActivity, type WorkersStatus } from "@/lib/api";
 
 const POLL_MS = 3000;
 
@@ -35,11 +35,17 @@ export default function WorkersPage() {
   const [actingOn, setActingOn] = useState<number | null>(null);
   const [enumSync, setEnumSync] = useState<EnumSyncResult[] | null>(null);
   const [enumSyncing, setEnumSyncing] = useState(false);
+  const [auditTail, setAuditTail] = useState<AuditTailEntry[]>([]);
   const tickRef = useRef<number | null>(null);
 
   async function refresh(): Promise<void> {
     try {
-      setData(await api.workersStatus());
+      const [status, tail] = await Promise.all([
+        api.workersStatus(),
+        api.auditTail(50),
+      ]);
+      setData(status);
+      setAuditTail(tail);
       setError(null);
     } catch (e) {
       setError(String(e));
@@ -347,6 +353,63 @@ export default function WorkersPage() {
               Recent failures ({data.recent_failures.length})
             </h2>
             <JobTable rows={data.recent_failures} empty="No failures in the last hour." />
+          </div>
+
+          <div className="card">
+            <h2 style={{ marginTop: 0, color: "var(--forte-navy)" }}>
+              Audit tail ({auditTail.length})
+            </h2>
+            <p className="muted" style={{ marginTop: 4, fontSize: 12 }}>
+              Last {auditTail.length} events across the system, newest first.
+              Watch model_call / tool_call / rate_limit fire in real time.
+            </p>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ textAlign: "left", borderBottom: "1px solid var(--forte-rule)" }}>
+                  <th style={{ padding: "4px 6px", width: 90 }}>When</th>
+                  <th style={{ width: 60 }}>Report</th>
+                  <th style={{ width: 140 }}>Actor</th>
+                  <th style={{ width: 140 }}>Event</th>
+                  <th style={{ width: 80, textAlign: "right" }}>Cost</th>
+                  <th>Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                {auditTail.map((e) => (
+                  <tr key={e.id} style={{ borderBottom: "1px solid var(--forte-rule)" }}>
+                    <td style={{ padding: "3px 6px", fontVariantNumeric: "tabular-nums" }}>
+                      {fmtTimestamp(e.created_at)}
+                    </td>
+                    <td>
+                      {e.report_id != null ? (
+                        <a href={`/reports/${e.report_id}`}>#{e.report_id}</a>
+                      ) : <span className="muted">—</span>}
+                    </td>
+                    <td style={{ fontFamily: "var(--font-mono, monospace)" }}>{e.actor}</td>
+                    <td>
+                      <span className="stage-pill" style={{
+                        fontSize: 10,
+                        background: e.event === "tool_error" || e.event === "rate_limit"
+                          ? "#FEEBC8" : undefined,
+                      }}>
+                        {e.event}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                      {e.cost_usd > 0 ? `$${e.cost_usd.toFixed(4)}` : "—"}
+                    </td>
+                    <td className="muted" style={{
+                      fontSize: 11, maxWidth: 320,
+                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    }}>
+                      {Object.keys(e.details ?? {}).length > 0
+                        ? JSON.stringify(e.details)
+                        : ""}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </>
       )}

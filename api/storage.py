@@ -80,6 +80,21 @@ def upload_artifacts(report_id: int, wd: Path) -> int:
             )
             uploaded += 1
 
+    # Per-analyst notes + section files. These power /reports/{id}/rerun_analyst,
+    # which needs notes-<slug>.md to redo a draft after a rebuild has wiped
+    # the working dir. Cheap and small (markdown, kilobytes).
+    for f in wd.iterdir():
+        if not f.is_file():
+            continue
+        name = f.name
+        if not (name.startswith("notes-") or name.startswith("section-")) or not name.endswith(".md"):
+            continue
+        client.upload_file(
+            str(f), settings.r2_bucket, _key(report_id, name),
+            ExtraArgs={"ContentType": "text/markdown"},
+        )
+        uploaded += 1
+
     charts = wd / "charts"
     if charts.exists():
         for f in charts.iterdir():

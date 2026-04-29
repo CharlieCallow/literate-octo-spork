@@ -32,6 +32,8 @@ export interface Report {
   // Source-diversity flag, set at render time (null when not yet computed).
   max_domain_share?: number | null;
   top_domain?: string | null;
+  // Throwaway smoke run -- excluded from archive default + Scout history.
+  is_test?: boolean;
 }
 
 export interface PositionRow {
@@ -186,6 +188,16 @@ export interface WorkerErrorInfo {
   captured_at: string | null;
 }
 
+export interface AuditTailEntry {
+  id: number;
+  report_id: number | null;
+  actor: string;
+  event: string;
+  cost_usd: number;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
 export interface EnumSyncResult {
   type_name: string;
   existing_values: string[];
@@ -319,7 +331,8 @@ export interface EmailReportResponse {
 }
 
 export const api = {
-  listReports: () => req<Report[]>("/reports"),
+  listReports: (opts?: { includeTest?: boolean }) =>
+    req<Report[]>(`/reports${opts?.includeTest ? "?include_test=true" : ""}`),
   getReport: (id: number) => req<Report>(`/reports/${id}`),
   listJobs: (id: number) => req<Job[]>(`/reports/${id}/jobs`),
   listTeam: () => req<TeamMember[]>("/team"),
@@ -346,6 +359,8 @@ export const api = {
   },
   cancel: (id: number) => req<Report>(`/reports/${id}/cancel`, { method: "POST" }),
   forceFail: (id: number) => req<Report>(`/reports/${id}/force_fail`, { method: "POST" }),
+  rerunAnalyst: (id: number, slug: string) =>
+    req<Report>(`/reports/${id}/rerun_analyst/${encodeURIComponent(slug)}`, { method: "POST" }),
   listArchive: () => req<{ slug: string; name: string; role: string }[]>("/team/archive"),
   rehire: (slug: string) => req<{ slug: string; name: string; role: string; markdown: string }>(`/team/${slug}/rehire`, { method: "POST" }),
 
@@ -356,6 +371,9 @@ export const api = {
 
   // Per-stage average duration in seconds, computed from past completed jobs.
   stageDurations: () => req<{ stage: ReportStage; seconds: number }[]>("/reports/eta/stage_durations"),
+  // Trailing-30-day median + p90 cost per mode, ground-truth for the
+  // /new confirm dialog.
+  costStats: () => req<{ mode: ReportMode; n: number; median_cost_usd: number | null; p90_cost_usd: number | null }[]>("/reports/cost_stats"),
 
   // Interactive charts
   listChartFiles: (reportId: number) =>
@@ -368,6 +386,7 @@ export const api = {
   forceFailJob: (jobId: number) =>
     req<JobActivity>(`/workers/jobs/${jobId}/force_fail`, { method: "POST" }),
   syncEnums: () => req<EnumSyncResult[]>("/workers/sync_enums", { method: "POST" }),
+  auditTail: (limit = 50) => req<AuditTailEntry[]>(`/workers/audit_tail?limit=${limit}`),
 
   // Audit log
   getAuditLog: (reportId: number, filter?: { event?: string; actor?: string }) => {

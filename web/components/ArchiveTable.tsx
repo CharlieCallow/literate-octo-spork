@@ -7,7 +7,7 @@ type Sort = "newest" | "oldest" | "expensive";
 const ALL_STAGES: ReportStage[] = [
   "queued", "brief", "research", "charts", "draft", "redteam", "edit", "audit", "render", "feedback", "housekeeping", "done", "failed",
 ];
-const ALL_MODES: ReportMode[] = ["fast", "standard", "deep"];
+const ALL_MODES: ReportMode[] = ["test", "fast", "standard", "deep"];
 
 export function ArchiveTable() {
   const [reports, setReports] = useState<Report[]>([]);
@@ -16,12 +16,13 @@ export function ArchiveTable() {
   const [stages, setStages] = useState<Set<ReportStage>>(new Set());
   const [modes, setModes] = useState<Set<ReportMode>>(new Set());
   const [sort, setSort] = useState<Sort>("newest");
+  const [includeTest, setIncludeTest] = useState(false);
 
   useEffect(() => {
     let alive = true;
     const tick = async () => {
       try {
-        const list = await api.listReports();
+        const list = await api.listReports({ includeTest });
         if (alive) setReports(list);
       } catch (e) {
         if (alive) setError(String(e));
@@ -30,7 +31,7 @@ export function ArchiveTable() {
     tick();
     const t = setInterval(tick, 5000);
     return () => { alive = false; clearInterval(t); };
-  }, []);
+  }, [includeTest]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -84,6 +85,18 @@ export function ArchiveTable() {
           ))}
         </div>
 
+        <label style={{
+          marginTop: 12, display: "flex", alignItems: "center", gap: 8,
+          fontSize: 13, color: "var(--forte-muted)",
+        }}>
+          <input
+            type="checkbox"
+            checked={includeTest}
+            onChange={(e) => setIncludeTest(e.target.checked)}
+          />
+          Include test-mode runs
+        </label>
+
         <div className="byline" style={{ marginTop: 12 }}>Sort</div>
         <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} style={{ width: 200 }}>
           <option value="newest">Newest first</option>
@@ -119,7 +132,15 @@ export function ArchiveTable() {
                     {r.subtitle && <div className="muted" style={{ fontSize: 11 }}>{r.subtitle}</div>}
                   </td>
                   <td><span className={`stage-pill ${r.stage}`}>{r.stage}</span></td>
-                  <td><span className="stage-pill">{r.mode}</span></td>
+                  <td>
+                    <span className="stage-pill">{r.mode}</span>
+                    {r.is_test && (
+                      <span className="stage-pill" style={{
+                        marginLeft: 4, background: "var(--forte-rule)",
+                        color: "var(--forte-muted)", fontSize: 10,
+                      }}>test</span>
+                    )}
+                  </td>
                   <td style={{ textAlign: "right", fontFamily: "monospace" }}>${r.cost_usd.toFixed(3)}</td>
                   <td style={{ textAlign: "right" }}>
                     {r.pdf_url && <a href={api.pdfUrl(r.id)}>PDF</a>}
