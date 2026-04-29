@@ -95,9 +95,19 @@ Output the full updated house view in markdown, nothing else.
         past_reports: list[dict[str, str]] | None = None,
         house_view: str | None = None,
         primer: str | None = None,
+        calibration: dict[str, str] | None = None,
     ) -> AgentResult:
         roster = available_contributors or []
-        roster_blob = "\n".join(f"- `{c['slug']}` — {c['name']} ({c['role']})" for c in roster) or "(none)"
+        # Annotate each contributor with their calibration line if we have
+        # one. Brand-new analysts have no track record yet, so we leave
+        # their bullet plain rather than pretending to know.
+        def _bullet(c: dict[str, str]) -> str:
+            base = f"- `{c['slug']}` — {c['name']} ({c['role']})"
+            line = (calibration or {}).get(c['slug'])
+            if line:
+                base += f" · {line}"
+            return base
+        roster_blob = "\n".join(_bullet(c) for c in roster) or "(none)"
 
         if past_reports:
             past_blob = "\n".join(
@@ -137,7 +147,7 @@ PRIOR PUBLISHED REPORTS (most recent first):
 {house_view_blob}{primer_blob}
 Do NOT reference past reports that aren't on the list above. If the list is empty, this really is the first report -- don't pretend the firm has prior history. Anchor only to claims you can verify with tool calls or that appear in the past list.
 
-AVAILABLE CONTRIBUTORS:
+AVAILABLE CONTRIBUTORS (each line ends with their calibration when we have one -- a higher hit rate over a meaningful sample is a reason to lean on them; a 90% confidence persona with a 30% hit rate over many calls means weight their c4/c5 claims less):
 {roster_blob}
 
 DATA SOURCES THE TEAM CAN PULL FROM:

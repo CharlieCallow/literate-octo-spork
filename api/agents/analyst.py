@@ -8,6 +8,7 @@ from api.agents.base import Agent, AgentResult, Tool
 from api.agents.cost import CostTracker
 from api.agents.tools import (
     arxiv_tool,
+    cftc_cot_tool,
     clinical_trials_tool,
     coingecko_markets_tool,
     coingecko_trending_tool,
@@ -15,6 +16,7 @@ from api.agents.tools import (
     edgar_extract_tool,
     edgar_filings_tool,
     eia_series_tool,
+    form4_tool,
     fred_series_tool,
     gdelt_tool,
     github_repo_tool,
@@ -77,10 +79,17 @@ THEME: {theme}{upload_note}
 Run your research. Available tools:
 
 Markets / macro:
-- `fred_series` — US macro time series (rates, CPI, employment, etc.)
+- `fred_series` — US macro time series. Useful series cheat-sheet:
+  · rates path: 'DGS2' / 'DGS5' / 'DGS10' / 'DGS30', 'T10Y2Y' (curve), 'T10Y3M' (curve), 'SOFR'
+  · inflation: 'CPIAUCSL' (headline CPI), 'CPILFESL' (core CPI), 'PCEPILFE' (core PCE), 'T10YIE' (10Y breakeven)
+  · credit spreads: 'BAMLH0A0HYM2' (HY OAS), 'BAMLC0A0CM' (IG OAS), 'BAMLH0A1HYBB' (BB OAS), 'TEDRATE'
+  · vol / risk: 'VIXCLS' (VIX), 'VXVCLS' (3M VIX), 'STLFSI4' (St Louis financial-stress index)
+  · growth: 'GDPC1' (real GDP), 'INDPRO' (industrial production), 'PAYEMS' (payrolls), 'UNRATE', 'ICSA' (initial claims)
+  · money / liquidity: 'M2SL', 'WALCL' (Fed balance sheet), 'WTREGEN' (TGA), 'RRPONTSYD' (RRP)
 - `yfinance_history` — equity / ETF / FX / crypto / futures price history
 - `worldbank_series` — cross-country macro (GDP, debt, FX reserves)
 - `eia_series` — US energy data (oil, gas, electricity)
+- `cftc_cot` — weekly CFTC Commitments of Traders positioning. Aliases: '10y', '5y', '2y', 'wti', 'natgas', 'gold', 'silver', 'copper', 'spx', 'nasdaq', 'russell', 'vix', 'dxy', 'eur', 'jpy', 'gbp'.
 
 Crypto / DeFi:
 - `coingecko_markets` — top crypto coins by market cap with % changes
@@ -90,6 +99,7 @@ Crypto / DeFi:
 Filings / regulatory:
 - `edgar_filings` — recent SEC filings for a ticker (10-K, 10-Q, 8-K)
 - `edgar_extract` — pull a named section ('risk_factors', 'mdna', 'business', 'guidance', 'outlook', 'legal_proceedings', 'controls') or keyword-matched paragraphs from a filing URL. Use this to QUOTE primary-source language in your notes — that's what makes a report read like a real shop instead of a meta-summariser.
+- `form4_insiders` — recent SEC Form 4 (insider transaction) filings for a ticker. Insider buying / selling at concentrated points around earnings or pivots is often the tell.
 - `openfda_drug_labels` — FDA drug labels search
 - `openfda_recalls` — recent drug recalls
 - `clinical_trials` — ClinicalTrials.gov pipeline data (sponsor, phase, status)
@@ -120,6 +130,8 @@ Be opinionated; hedging without conviction is the failure mode. Output ~300-500 
             wikipedia_tool(),
             edgar_filings_tool(),
             edgar_extract_tool(),
+            form4_tool(),
+            cftc_cot_tool(),
             coingecko_markets_tool(),
             coingecko_trending_tool(),
             eia_series_tool(),

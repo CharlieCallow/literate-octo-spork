@@ -65,6 +65,16 @@ export interface TeamMember {
   reports_contributed: number;
   last_assignment_at: string | null;
   rewrite_ratio: number | null;
+  // Conviction calibration. calls_total counts every call ever made;
+  // calls_graded counts those past their horizon. hit_rate is null until
+  // a meaningful number of calls have matured (the brief uses the same
+  // threshold internally).
+  calls_total?: number;
+  calls_graded?: number;
+  hit_rate?: number | null;
+  avg_conviction?: number | null;
+  drift_axis?: string | null;
+  drift_pct?: number | null;
 }
 
 export interface AppSettings {
@@ -374,6 +384,7 @@ export const api = {
   // Trailing-30-day median + p90 cost per mode, ground-truth for the
   // /new confirm dialog.
   costStats: () => req<{ mode: ReportMode; n: number; median_cost_usd: number | null; p90_cost_usd: number | null }[]>("/reports/cost_stats"),
+  costRollup: () => req<{ today_usd: number; last_7d_usd: number; last_30d_usd: number; n_reports_today: number; n_reports_7d: number; n_reports_30d: number }>("/reports/cost_rollup"),
 
   // Interactive charts
   listChartFiles: (reportId: number) =>

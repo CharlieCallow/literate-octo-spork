@@ -290,6 +290,59 @@ def cost_stats(session: Session = Depends(get_session)) -> list[ModeCostStat]:
     return out
 
 
+class CostRollup(BaseModel):
+    """Sum of audit_log cost across rolling windows. Frontend renders
+    today / 7d / 30d on the home page so the user sees the burn at a
+    glance instead of having to add up reports manually."""
+    today_usd: float
+    last_7d_usd: float
+    last_30d_usd: float
+    n_reports_today: int
+    n_reports_7d: int
+    n_reports_30d: int
+
+
+@router.get("/cost_rollup", response_model=CostRollup, dependencies=[Depends(require_auth)])
+def cost_rollup(session: Session = Depends(get_session)) -> CostRollup:
+    """Rolling cost totals: today, last 7 days, last 30 days. Computed
+    off audit_log so it captures every model_call ever made, including
+    failed/cancelled report runs that the per-report cost view doesn't
+    surface."""
+    now = datetime.now(UTC)
+    start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_cutoff = now - timedelta(days=7)
+    month_cutoff = now - timedelta(days=30)
+
+    rows = session.exec(
+        select(AuditLog).where(AuditLog.created_at >= month_cutoff)
+    ).all()
+
+    def _aware(d):  # type: ignore[no-untyped-def]
+        return d if d.tzinfo else d.replace(tzinfo=UTC)
+
+    cost_day = sum(r.cost_usd for r in rows if _aware(r.created_at) >= start_of_day)
+    cost_week = sum(r.cost_usd for r in rows if _aware(r.created_at) >= week_cutoff)
+    cost_month = sum(r.cost_usd for r in rows)
+
+    # Report counts on the same windows. Useful divisor: knowing
+    # "$5.20 over 6 reports" reads more honestly than "$5.20 today".
+    rpt_rows = session.exec(
+        select(Report).where(Report.created_at >= month_cutoff)
+    ).all()
+    rpt_day = sum(1 for r in rpt_rows if _aware(r.created_at) >= start_of_day)
+    rpt_week = sum(1 for r in rpt_rows if _aware(r.created_at) >= week_cutoff)
+    rpt_month = len(rpt_rows)
+
+    return CostRollup(
+        today_usd=round(cost_day, 4),
+        last_7d_usd=round(cost_week, 4),
+        last_30d_usd=round(cost_month, 4),
+        n_reports_today=rpt_day,
+        n_reports_7d=rpt_week,
+        n_reports_30d=rpt_month,
+    )
+
+
 @router.get("/eta/stage_durations", response_model=list[StageEstimate], dependencies=[Depends(require_auth)])
 def stage_durations(session: Session = Depends(get_session)) -> list[StageEstimate]:
     """Average per-stage duration in seconds, computed from completed Jobs.
