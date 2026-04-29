@@ -286,6 +286,7 @@ export const api = {
     return req<Report>(`/reports/${id}/resume${qs}`, { method: "POST" });
   },
   cancel: (id: number) => req<Report>(`/reports/${id}/cancel`, { method: "POST" }),
+  forceFail: (id: number) => req<Report>(`/reports/${id}/force_fail`, { method: "POST" }),
   listArchive: () => req<{ slug: string; name: string; role: string }[]>("/team/archive"),
   rehire: (slug: string) => req<{ slug: string; name: string; role: string; markdown: string }>(`/team/${slug}/rehire`, { method: "POST" }),
 

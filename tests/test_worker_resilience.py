@@ -240,3 +240,73 @@ def test_watchdog_exhausts_retries_and_fails_report(db) -> None:  # type: ignore
             select(Job).where(Job.report_id == report_id, Job.status == "pending")
         ).all()
         assert pendings == []
+
+
+# ----------------------------------------------------------------------
+# Force-fail endpoint
+# ----------------------------------------------------------------------
+
+def test_force_fail_marks_running_and_pending_jobs_failed(db) -> None:  # type: ignore[no-untyped-def]
+    """force_fail is the triage button for a stuck report -- it must
+    actually clean up the running job (the cancel endpoint doesn't) so
+    the worker stops chewing on a hung call."""
+    from fastapi import HTTPException
+
+    from api.models import Job, Report, ReportStage
+    from api.routes.reports import force_fail
+
+    report_id = _seed_report(db)
+    with Session(db) as session:
+        session.add(Job(
+            report_id=report_id, stage=ReportStage.draft,
+            status="running", attempts=1,
+            started_at=datetime.now(UTC),
+        ))
+        session.add(Job(
+            report_id=report_id, stage=ReportStage.redteam,
+            status="pending", attempts=0,
+        ))
+        session.commit()
+
+    with Session(db) as session:
+        out = force_fail(report_id, session=session)
+    assert out.stage == "failed"
+
+    with Session(db) as session:
+        statuses = sorted(
+            j.status
+            for j in session.exec(select(Job).where(Job.report_id == report_id)).all()
+        )
+        assert statuses == ["failed", "failed"]
+        # Report row mirrors the failure too (so /resume can pick it up).
+        report = session.get(Report, report_id)
+        assert report is not None and report.stage == ReportStage.failed
+        assert report.error and "Force-failed" in report.error
+
+    # Idempotency: calling force_fail twice on the same report must error
+    # rather than silently re-rewriting state.
+    with Session(db) as session, pytest.raises(HTTPException) as exc:  # type: ignore[call-overload]
+        force_fail(report_id, session=session)
+    assert exc.value.status_code == 400
+
+
+def test_force_fail_rejects_already_terminal_reports(db) -> None:  # type: ignore[no-untyped-def]
+    """Can't force-fail a done report -- the user shouldn't think they
+    achieved anything when the report has already shipped."""
+    from fastapi import HTTPException
+
+    from api.models import Report, ReportStage
+    from api.routes.reports import force_fail
+
+    report_id = _seed_report(db)
+    with Session(db) as session:
+        r = session.get(Report, report_id)
+        assert r is not None
+        r.stage = ReportStage.done
+        session.add(r)
+        session.commit()
+
+    with Session(db) as session, pytest.raises(HTTPException) as exc:  # type: ignore[call-overload]
+        force_fail(report_id, session=session)
+    assert exc.value.status_code == 400
+    assert "done" in exc.value.detail
