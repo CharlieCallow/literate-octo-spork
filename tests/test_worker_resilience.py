@@ -833,6 +833,52 @@ def test_workers_status_falls_back_to_crash_file_when_appsetting_empty(
     assert "file-fallback traceback content" in out.worker_last_error.message
 
 
+def test_enum_sync_map_includes_rebuttal_stage() -> None:
+    """The rebuttal stage was added to ReportStage in the layer-2 work
+    but the Postgres `reportstage` enum doesn't auto-update. The migration
+    map must include reportstage so the startup sync picks it up; if the
+    map drifts away from a real enum, INSERTs blow up with
+    InvalidTextRepresentation -- the bug we just hit on report 16."""
+    from api.db import _enum_sync_map
+    from api.models import ReportStage
+
+    name_to_cls = dict(_enum_sync_map())
+    assert "reportstage" in name_to_cls
+    assert name_to_cls["reportstage"] is ReportStage
+    # Specifically the value that broke prod -- pin it so a future
+    # rename doesn't silently drop the migration entry.
+    values = [m.value for m in name_to_cls["reportstage"]]
+    assert "rebuttal" in values
+
+
+def test_enum_sync_map_covers_every_enum_typed_column() -> None:
+    """If you add a new Enum to api.models and forget to register it in
+    _enum_sync_map, future enum-additions to that type will explode in
+    prod the same way `rebuttal` did. This test catches that drift."""
+    import enum
+
+    from api import models
+    from api.db import _enum_sync_map
+
+    registered = {cls for _, cls in _enum_sync_map()}
+    declared: set[type] = set()
+    for name in dir(models):
+        obj = getattr(models, name)
+        # Only str-subclassed Enums (the SQLModel pattern for db enums).
+        if (
+            isinstance(obj, type)
+            and issubclass(obj, enum.Enum)
+            and issubclass(obj, str)
+            and obj is not enum.Enum
+        ):
+            declared.add(obj)
+    missing = declared - registered
+    assert not missing, (
+        f"these str-Enums in api.models aren't in _enum_sync_map: {missing}. "
+        "Add them so future value additions get migrated automatically."
+    )
+
+
 def test_excepthook_persists_main_thread_exception(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
     """The sys.excepthook is the only thing that catches a crash at
     worker startup -- before init_db, before the poll loop, anywhere

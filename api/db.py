@@ -173,6 +173,84 @@ def _migrate_sqlite() -> None:
                 except Exception:
                     pass
 
+        # Postgres enum migration. SQLModel.metadata.create_all does NOT
+        # ALTER existing enum types when the Python enum gains new values.
+        # Sync any missing values now so an enum addition (e.g. the
+        # `rebuttal` stage) doesn't blow up the next INSERT with
+        # InvalidTextRepresentation.
+        _sync_pg_enums()
+
+
+# Map of Postgres enum-type-name -> Python enum class. Add an entry when
+# you introduce a new enum-typed column. The migration runs at startup
+# and is idempotent (each ADD VALUE is wrapped in its own savepoint).
+def _enum_sync_map() -> list[tuple[str, type]]:
+    from api.models import (
+        CallDirection,
+        CallOutcome,
+        PersonaStatus,
+        RecommendationKind,
+        RecommendationStatus,
+        ReportMode,
+        ReportStage,
+    )
+    return [
+        ("reportstage",          ReportStage),
+        ("reportmode",           ReportMode),
+        ("personastatus",        PersonaStatus),
+        ("recommendationkind",   RecommendationKind),
+        ("recommendationstatus", RecommendationStatus),
+        ("calldirection",        CallDirection),
+        ("calloutcome",          CallOutcome),
+    ]
+
+
+def _sync_pg_enums() -> None:
+    """For each registered (type_name, EnumClass), ALTER TYPE ADD VALUE
+    for any Python enum value that's missing from the Postgres type.
+
+    Each ADD VALUE runs in its own savepoint so a single failure (e.g.
+    a value that's already been added by another instance racing the
+    migration) doesn't poison the rest of the sync."""
+    import logging
+    log = logging.getLogger("db.migrate")
+    for type_name, enum_cls in _enum_sync_map():
+        try:
+            with engine.connect() as conn:
+                # Read what's already in the Postgres type.
+                rows = conn.exec_driver_sql(
+                    "SELECT enumlabel FROM pg_enum e "
+                    "JOIN pg_type t ON e.enumtypid = t.oid "
+                    "WHERE t.typname = %s",
+                    (type_name,),
+                ).fetchall()
+                existing = {r[0] for r in rows}
+                if not existing:
+                    # Type doesn't exist yet -- create_all() will create
+                    # it with all current values, so nothing to migrate.
+                    continue
+                for member in enum_cls:
+                    if member.value in existing:
+                        continue
+                    log.info(
+                        "syncing enum %s: ADD VALUE %r", type_name, member.value,
+                    )
+                    try:
+                        # ALTER TYPE ... ADD VALUE can't run inside a
+                        # transaction block in older Postgres; use
+                        # AUTOCOMMIT for the duration of this statement.
+                        ac = conn.execution_options(isolation_level="AUTOCOMMIT")
+                        ac.exec_driver_sql(
+                            f"ALTER TYPE {type_name} ADD VALUE IF NOT EXISTS '{member.value}'"
+                        )
+                    except Exception:  # noqa: BLE001
+                        log.exception(
+                            "could not add %r to enum %s -- continuing",
+                            member.value, type_name,
+                        )
+        except Exception:  # noqa: BLE001
+            log.exception("enum sync for %s failed (non-blocking)", type_name)
+
 
 def get_session() -> Iterator[Session]:
     with Session(engine) as session:
