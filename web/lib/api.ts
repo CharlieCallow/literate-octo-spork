@@ -185,6 +185,15 @@ export interface WorkerErrorInfo {
   captured_at: string | null;
 }
 
+export interface EnumSyncResult {
+  type_name: string;
+  existing_values: string[];
+  python_values: string[];
+  added: string[];
+  still_missing: string[];
+  error: string | null;
+}
+
 export interface WorkersStatus {
   now: string;
   last_activity_at: string | null;
@@ -357,6 +366,7 @@ export const api = {
   workersStatus: () => req<WorkersStatus>("/workers/status"),
   forceFailJob: (jobId: number) =>
     req<JobActivity>(`/workers/jobs/${jobId}/force_fail`, { method: "POST" }),
+  syncEnums: () => req<EnumSyncResult[]>("/workers/sync_enums", { method: "POST" }),
 
   // Audit log
   getAuditLog: (reportId: number, filter?: { event?: string; actor?: string }) => {
