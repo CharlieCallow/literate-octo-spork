@@ -490,13 +490,30 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             log.exception("primer stage failed (non-blocking)")
 
         eic = EditorInChief(cost, audit=audit, model=models["editor"])
+        # Per-analyst calibration anchors the EIC's contributor weighting
+        # in actual track record rather than persona vibes. Skipped on
+        # test mode -- smoke runs don't extract calls anyway.
+        roster = get_roster()
+        cal_lines: dict[str, str] = {}
+        if report.mode != ReportMode.test:
+            try:
+                from api import calibration as cal_mod
+                all_cal = cal_mod.for_all()
+                for c in roster:
+                    if c["slug"] in all_cal:
+                        line = cal_mod.format_for_brief(all_cal[c["slug"]], c["name"])
+                        if line:
+                            cal_lines[c["slug"]] = line
+            except Exception:  # noqa: BLE001
+                log.exception("calibration lookup failed (non-blocking)")
         result = eic.write_brief(
             report.theme,
             subtitle=report.subtitle,
-            available_contributors=get_roster(),
+            available_contributors=roster,
             past_reports=_past_reports_summary(exclude_id=report.id),
             house_view=house_view_mod.get(),
             primer=primer_text or None,
+            calibration=cal_lines or None,
         )
         _write(wd / "brief.md", result.text)
 
@@ -909,6 +926,35 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
 
         from api.citations import attach_inline_citations, domain_distribution
         raw_sections = _sections_for_render(parsed, wd)
+
+        # Glossary appendix: a Haiku pass over the edited prose tags
+        # the technical terms a generalist reader wouldn't know. Best-
+        # effort -- a failure here just means no appendix. Skipped on
+        # test mode (smoke runs don't get the polish layer).
+        if report.mode != ReportMode.test:
+            try:
+                from api.agents.glossary import Glossary, is_empty
+                glossary = Glossary(cost, audit=audit)
+                gl_result = glossary.build(edited_prose=edited)
+                gl_text = gl_result.text or ""
+                _record(report.id, wd, gl_result)
+                _write(wd / "glossary.md", gl_text)
+                if not is_empty(gl_text):
+                    # Strip the model's `# Glossary` heading; the
+                    # renderer adds its own from Section.heading.
+                    body = gl_text
+                    for line in gl_text.splitlines():
+                        if line.lstrip().startswith("# "):
+                            after = gl_text.split(line, 1)[1]
+                            body = after.lstrip("\n")
+                            break
+                    raw_sections.append(Section(
+                        heading="Glossary",
+                        body_md=body,
+                    ))
+            except Exception:  # noqa: BLE001
+                log.exception("glossary build failed (non-blocking)")
+
         cited_sections, ordered_sources = attach_inline_citations(
             raw_sections, _read_sources(wd),
         )
@@ -991,15 +1037,27 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
                 log_entries.append(f"## {c['name']}\n\n_feedback failed: {e}_\n")
                 continue
             _record(report.id, wd, fb)
+            # Append a calibration footer to the feedback so the persona's
+            # log accumulates a track record over time. Best-effort: a
+            # missing calibration block doesn't suppress the feedback itself.
+            body = fb.text
+            try:
+                from api import calibration as cal_mod
+                cal = cal_mod.for_persona(c["slug"])
+                cal_block = cal_mod.format_for_feedback(cal)
+                if cal_block:
+                    body = f"{fb.text}\n\n_Calibration:_\n{cal_block}"
+            except Exception:  # noqa: BLE001
+                log.exception("calibration footer failed for %s", c["slug"])
             try:
                 from api.feedback import append_to_persona
-                if not append_to_persona(c["slug"], body=fb.text, report_id=report.id):
-                    log_entries.append(f"## {c['name']}\n\n_persona not found in DB_\n{fb.text}\n")
+                if not append_to_persona(c["slug"], body=body, report_id=report.id):
+                    log_entries.append(f"## {c['name']}\n\n_persona not found in DB_\n{body}\n")
                     continue
             except Exception as e:  # noqa: BLE001
-                log_entries.append(f"## {c['name']}\n\n_failed to append: {e}_\n{fb.text}\n")
+                log_entries.append(f"## {c['name']}\n\n_failed to append: {e}_\n{body}\n")
                 continue
-            log_entries.append(f"## {c['name']}\n\n{fb.text}\n")
+            log_entries.append(f"## {c['name']}\n\n{body}\n")
 
         _write(wd / "feedback.md", "\n\n---\n\n".join(log_entries) or "_No feedback written._\n")
 

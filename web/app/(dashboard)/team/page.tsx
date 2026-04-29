@@ -36,20 +36,50 @@ export default function TeamPage() {
       {members.length === 0 && !error && (
         <div className="card"><p className="muted">Loading roster…</p></div>
       )}
-      {members.map((m) => (
-        <div key={m.slug} className="card">
-          <h2 style={{ marginBottom: 4, fontSize: 18 }}>
-            <a href={`/team/${m.slug}`} style={{ color: "var(--forte-navy)" }}>{m.name}</a>
-          </h2>
-          <p className="muted" style={{ marginTop: 0 }}>
-            <span className="byline" style={{ marginRight: 8 }}>{m.role}</span>
-            {m.reports_contributed} report{m.reports_contributed === 1 ? "" : "s"}
-            {m.last_assignment_at && (
-              <> · last assignment {new Date(m.last_assignment_at).toLocaleDateString()}</>
+      {members.map((m) => {
+        const hitRatePct =
+          m.hit_rate != null ? `${Math.round(m.hit_rate * 100)}%` : null;
+        const overconfident =
+          m.hit_rate != null
+          && m.avg_conviction != null
+          && m.avg_conviction >= 4.0
+          && m.hit_rate < 0.5;
+        return (
+          <div key={m.slug} className="card">
+            <h2 style={{ marginBottom: 4, fontSize: 18 }}>
+              <a href={`/team/${m.slug}`} style={{ color: "var(--forte-navy)" }}>{m.name}</a>
+            </h2>
+            <p className="muted" style={{ marginTop: 0 }}>
+              <span className="byline" style={{ marginRight: 8 }}>{m.role}</span>
+              {m.reports_contributed} report{m.reports_contributed === 1 ? "" : "s"}
+              {m.last_assignment_at && (
+                <> · last assignment {new Date(m.last_assignment_at).toLocaleDateString()}</>
+              )}
+            </p>
+            {(m.calls_total ?? 0) > 0 && (
+              <p style={{ marginTop: 4, fontSize: 12 }}>
+                <span className="byline" style={{ marginRight: 6 }}>Calibration</span>
+                {(m.calls_graded ?? 0) === 0 ? (
+                  <span className="muted">
+                    {m.calls_total} calls open · avg conviction {m.avg_conviction?.toFixed(1) ?? "—"}/5 · none graded yet
+                  </span>
+                ) : (
+                  <>
+                    <strong style={{ color: overconfident ? "#A33" : "var(--forte-navy)" }}>
+                      {hitRatePct ?? "early"}
+                    </strong>
+                    <span className="muted">
+                      {" "}hit rate over {m.calls_graded} graded
+                      {m.avg_conviction != null && <> · avg conviction {m.avg_conviction.toFixed(1)}/5</>}
+                      {overconfident && <> · <span style={{ color: "#A33" }}>overconfident</span></>}
+                    </span>
+                  </>
+                )}
+              </p>
             )}
-          </p>
-        </div>
-      ))}
+          </div>
+        );
+      })}
 
       {archived.length > 0 && (
         <div className="card">

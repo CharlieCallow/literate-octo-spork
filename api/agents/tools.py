@@ -14,11 +14,13 @@ import pandas as pd
 from api.agents.base import Tool
 from api.data import (
     arxiv,
+    cftc,
     coingecko,
     ctgov,
     defillama,
     edgar,
     eia,
+    form4,
     fred,
     gdelt,
     github,
@@ -148,6 +150,60 @@ def edgar_filings_tool() -> Tool:
                 "limit": {"type": "integer", "default": 5},
             },
             "required": ["ticker"],
+        },
+        fn=fn,
+    )
+
+
+def form4_tool() -> Tool:
+    def fn(ticker: str, limit: int = 15) -> str:
+        rows = form4.recent_insider_filings(ticker, limit=limit)
+        return json.dumps({"ticker": ticker, "n": len(rows), "filings": rows})
+
+    return Tool(
+        name="form4_insiders",
+        description=(
+            "Recent SEC Form 4 (insider transaction) filings for a US-"
+            "listed ticker. Returns filer name, filed date, accession, "
+            "and a URL. Useful as a leading equity signal -- "
+            "concentrated insider buying / selling around earnings or "
+            "pivots is often the tell."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string"},
+                "limit": {"type": "integer", "default": 15, "maximum": 50},
+            },
+            "required": ["ticker"],
+        },
+        fn=fn,
+    )
+
+
+def cftc_cot_tool() -> Tool:
+    def fn(market: str, weeks: int = 8) -> str:
+        rows = cftc.latest_positions(market, weeks=weeks)
+        return json.dumps({"market": market, "n": len(rows), "weeks": rows})
+
+    return Tool(
+        name="cftc_cot",
+        description=(
+            "Weekly CFTC Commitments of Traders positioning. Pass a "
+            "friendly alias ('10y', '5y', '2y', 'wti', 'natgas', "
+            "'gold', 'silver', 'copper', 'spx', 'nasdaq', 'russell', "
+            "'vix', 'dxy', 'eur', 'jpy', 'gbp') or a CFTC market "
+            "substring. Returns commercial / non-commercial nets and "
+            "open interest by week, newest first. Useful for futures-"
+            "positioning context on macro themes."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "market": {"type": "string"},
+                "weeks": {"type": "integer", "default": 8, "maximum": 52},
+            },
+            "required": ["market"],
         },
         fn=fn,
     )

@@ -24,9 +24,11 @@ class Member(BaseModel):
     reports_contributed: int
     last_assignment_at: datetime | None
     rewrite_ratio: float | None  # placeholder for M4 sprint 4 — None for now
-    # Performance ledger
+    # Performance ledger / calibration
+    calls_total: int = 0
     calls_graded: int = 0
     hit_rate: float | None = None
+    avg_conviction: float | None = None
     # Voice drift (axis name + signed pct gap to firm mean), null when no drift
     drift_axis: str | None = None
     drift_pct: float | None = None
@@ -56,24 +58,25 @@ def _stats_for(slug: str, session: Session) -> tuple[int, datetime | None]:
 
 @router.get("", response_model=list[Member], dependencies=[Depends(require_auth)])
 def list_team(session: Session = Depends(get_session)) -> list[Member]:
-    from api import calls as calls_mod
+    from api import calibration as cal_mod
     from api import voice_stats as voice_mod
 
-    hit_rates = calls_mod.hit_rate_by_persona()
+    cal_by_slug = cal_mod.for_all()
     drift_alerts = {a.persona_slug: a for a in voice_mod.detect_drift()}
 
     out: list[Member] = []
     for m in get_roster():
         slug = m["slug"]
         n, last = _stats_for(slug, session)
-        agg = hit_rates.get(slug, {})
-        graded = int(agg.get("graded", 0))
-        rate = float(agg["hit_rate"]) if "hit_rate" in agg else None
+        cal = cal_by_slug.get(slug)
         drift = drift_alerts.get(slug)
         out.append(Member(
             slug=slug, name=m["name"], role=m["role"],
             reports_contributed=n, last_assignment_at=last, rewrite_ratio=None,
-            calls_graded=graded, hit_rate=rate,
+            calls_total=cal.n_total if cal else 0,
+            calls_graded=cal.n_graded if cal else 0,
+            hit_rate=cal.hit_rate if cal else None,
+            avg_conviction=cal.avg_conviction if cal else None,
             drift_axis=drift.axis if drift else None,
             drift_pct=drift.pct_drift if drift else None,
         ))
