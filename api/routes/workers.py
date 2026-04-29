@@ -73,6 +73,14 @@ class SupervisorStats(BaseModel):
     pid: int | None = None
 
 
+class WorkerErrorInfo(BaseModel):
+    """Most recent unhandled exception captured by the worker's outer
+    try/except. The poll loop logs and continues now, but persists the
+    traceback so /workers can render it."""
+    message: str
+    captured_at: datetime | None
+
+
 class WorkersStatus(BaseModel):
     now: datetime
     last_activity_at: datetime | None
@@ -84,6 +92,7 @@ class WorkersStatus(BaseModel):
     worker_last_seen_at: datetime | None
     worker_last_seen_seconds_ago: float | None
     worker_alive: bool
+    worker_last_error: WorkerErrorInfo | None
     supervisor: SupervisorStats
     running: list[JobActivity]
     pending: list[JobActivity]
@@ -195,6 +204,12 @@ def status(session: Session = Depends(get_session)) -> WorkersStatus:
     worker_gap = max(0.0, (now - worker_seen).total_seconds()) if worker_seen else None
     worker_alive = worker_gap is not None and worker_gap < _WORKER_DEAD_AFTER_S
 
+    last_err = app_settings.worker_last_error()
+    worker_last_error = (
+        WorkerErrorInfo(message=last_err[0], captured_at=_aware(last_err[1]))
+        if last_err else None
+    )
+
     # Supervisor stats. The supervisor runs in the API process so even when
     # the worker is dead we can still tell the user "it's crashed N times".
     from api.workflow.supervisor import current as current_supervisor
@@ -226,6 +241,7 @@ def status(session: Session = Depends(get_session)) -> WorkersStatus:
         worker_last_seen_at=worker_seen,
         worker_last_seen_seconds_ago=worker_gap,
         worker_alive=worker_alive,
+        worker_last_error=worker_last_error,
         supervisor=supervisor,
         running=_build(running_jobs),
         pending=_build(pending_jobs),

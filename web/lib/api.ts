@@ -180,6 +180,11 @@ export interface SupervisorStats {
   pid: number | null;
 }
 
+export interface WorkerErrorInfo {
+  message: string;
+  captured_at: string | null;
+}
+
 export interface WorkersStatus {
   now: string;
   last_activity_at: string | null;
@@ -187,6 +192,7 @@ export interface WorkersStatus {
   worker_last_seen_at: string | null;
   worker_last_seen_seconds_ago: number | null;
   worker_alive: boolean;
+  worker_last_error: WorkerErrorInfo | null;
   supervisor: SupervisorStats;
   running: JobActivity[];
   pending: JobActivity[];
