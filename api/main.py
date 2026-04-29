@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import logging
-import subprocess
-import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -15,6 +13,7 @@ from api.db import init_db
 from api.routes import health, recruiter, reports, scout, team, workers
 from api.routes import settings as settings_routes
 from api.settings import settings
+from api.workflow.supervisor import WorkerSupervisor, set_current
 
 log = logging.getLogger("api")
 
@@ -22,24 +21,17 @@ log = logging.getLogger("api")
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     init_db()
-    worker = None
+    supervisor: WorkerSupervisor | None = None
     if settings.bundle_worker:
-        log.info("BUNDLE_WORKER=true; spawning worker as subprocess")
-        worker = subprocess.Popen(  # noqa: S603 - args are static / no shell
-            [sys.executable, "-u", "-m", "api.workflow.worker"],
-            stdout=sys.stdout,
-            stderr=sys.stderr,
-        )
+        log.info("BUNDLE_WORKER=true; starting worker supervisor")
+        supervisor = WorkerSupervisor().start()
+        set_current(supervisor)
     try:
         yield
     finally:
-        if worker is not None:
-            log.info("shutting down bundled worker")
-            worker.terminate()
-            try:
-                worker.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                worker.kill()
+        if supervisor is not None:
+            await supervisor.stop()
+            set_current(None)
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)

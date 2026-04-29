@@ -10,6 +10,7 @@ can drive job state directly without spinning up the real worker."""
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -479,6 +480,156 @@ def test_workers_status_reports_worker_offline_when_no_heartbeat(db, monkeypatch
     assert out.worker_alive is False
     assert out.worker_last_seen_at is None
     assert out.worker_last_seen_seconds_ago is None
+
+
+# ----------------------------------------------------------------------
+# Auto-respawn supervisor
+# ----------------------------------------------------------------------
+
+def test_supervisor_respawns_worker_when_subprocess_exits(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """If the worker subprocess exits, the supervisor must spawn a fresh
+    one without a redeploy. This is the bug the nuclear-power-deals
+    report hit -- worker crashed, API kept running, no auto-recovery."""
+    import api.workflow.supervisor as sv_mod
+    from api.workflow.supervisor import WorkerSupervisor
+
+    spawn_calls = {"n": 0}
+
+    class FakePopen:
+        """Stand-in for subprocess.Popen that lets the test flip alive ->
+        exited and asserts the supervisor reacts to it."""
+        def __init__(self, *_args, **_kwargs) -> None:
+            spawn_calls["n"] += 1
+            self.pid = 1000 + spawn_calls["n"]
+            self._exit_code: int | None = None
+
+        def poll(self) -> int | None:
+            return self._exit_code
+
+        def kill_with(self, code: int) -> None:
+            self._exit_code = code
+
+        def terminate(self) -> None:
+            self._exit_code = 0
+
+        def wait(self, timeout: float | None = None) -> int:
+            return self._exit_code or 0
+
+    monkeypatch.setattr(sv_mod.subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(sv_mod, "POLL_INTERVAL_S", 0.01)
+    monkeypatch.setattr(sv_mod, "RESPAWN_BACKOFF_BASE_S", 0.0)
+
+    async def _scenario() -> None:
+        supervisor = WorkerSupervisor()
+        supervisor.start()
+        await asyncio.sleep(0.1)
+        assert spawn_calls["n"] == 1
+        assert supervisor.stats.crash_count == 0
+        first = supervisor.process
+        assert first is not None
+        # Simulate a crash. The supervise loop should notice and respawn.
+        first.kill_with(137)  # type: ignore[attr-defined]
+        await asyncio.sleep(0.2)
+        assert supervisor.stats.crash_count >= 1
+        assert supervisor.stats.last_exit_code == 137
+        assert supervisor.stats.consecutive_failures >= 1
+        assert spawn_calls["n"] >= 2
+        await supervisor.stop()
+
+    asyncio.run(_scenario())
+
+
+def test_supervisor_backs_off_on_crash_loop(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A worker that crashes immediately on boot should not get respawned
+    in a tight loop -- the backoff has to grow with consecutive failures."""
+    import api.workflow.supervisor as sv_mod
+    from api.workflow.supervisor import WorkerSupervisor
+
+    sleep_calls: list[float] = []
+
+    class AlwaysDeadPopen:
+        def __init__(self, *_args, **_kwargs) -> None:
+            self.pid = 999
+        def poll(self) -> int:
+            return 1  # exited immediately
+        def terminate(self) -> None:
+            pass
+        def wait(self, timeout: float | None = None) -> int:
+            return 1
+
+    real_sleep = asyncio.sleep
+
+    async def recording_sleep(s: float) -> None:
+        sleep_calls.append(s)
+        # Don't actually wait the full backoff so the test stays quick.
+        await real_sleep(min(s, 0.02))
+
+    monkeypatch.setattr(sv_mod.subprocess, "Popen", AlwaysDeadPopen)
+    monkeypatch.setattr(sv_mod.asyncio, "sleep", recording_sleep)
+    monkeypatch.setattr(sv_mod, "POLL_INTERVAL_S", 0.005)
+    monkeypatch.setattr(sv_mod, "RESPAWN_BACKOFF_BASE_S", 0.5)
+    monkeypatch.setattr(sv_mod, "RESPAWN_BACKOFF_CEILING_S", 4.0)
+
+    async def _scenario() -> None:
+        supervisor = WorkerSupervisor()
+        supervisor.start()
+        await real_sleep(0.3)
+        await supervisor.stop()
+
+    asyncio.run(_scenario())
+
+    backoffs = [s for s in sleep_calls if s >= 0.5]
+    assert len(backoffs) >= 2, "expected multiple respawn backoffs"
+    # Backoff must be capped and must not be stuck at the base.
+    assert max(backoffs) <= 4.0
+    assert any(b > 0.5 for b in backoffs)
+
+
+def test_workers_status_includes_supervisor_stats_when_enabled(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """When the supervisor is registered in the API process, /workers/status
+    must surface its stats so a crash loop is visible on the dashboard."""
+    monkeypatch.setattr("api.routes.workers.engine", db, raising=False)
+
+    import api.workflow.supervisor as sv_mod
+    from api.routes.workers import status
+
+    sv = sv_mod.WorkerSupervisor()
+    sv.stats.crash_count = 3
+    sv.stats.consecutive_failures = 2
+    sv.stats.last_exit_code = 137
+    sv.stats.last_crash_at = datetime.now(UTC)
+    sv.stats.last_spawn_at = datetime.now(UTC)
+    sv.stats.pid = 1234
+    sv_mod.set_current(sv)
+
+    try:
+        with Session(db) as session:
+            out = status(session=session)
+    finally:
+        sv_mod.set_current(None)
+
+    assert out.supervisor.enabled is True
+    assert out.supervisor.crash_count == 3
+    assert out.supervisor.consecutive_failures == 2
+    assert out.supervisor.last_exit_code == 137
+    assert out.supervisor.pid == 1234
+
+
+def test_workers_status_supervisor_disabled_when_unbundled(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """If BUNDLE_WORKER is false (two-service deploy), the supervisor
+    isn't registered. /workers/status should report `enabled=false` so
+    the page doesn't claim the supervisor will auto-recover when it
+    won't."""
+    monkeypatch.setattr("api.routes.workers.engine", db, raising=False)
+
+    import api.workflow.supervisor as sv_mod
+    from api.routes.workers import status
+
+    sv_mod.set_current(None)
+    with Session(db) as session:
+        out = status(session=session)
+    assert out.supervisor.enabled is False
+    assert out.supervisor.crash_count == 0
 
 
 def test_workers_force_fail_endpoint_routes_through_failure_path(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
