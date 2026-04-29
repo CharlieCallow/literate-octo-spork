@@ -187,8 +187,41 @@ def regime_chart(
         color = CHART_CYCLE[i % len(CHART_CYCLE)]
         ax.plot(df.index, df[col], color=color, label=col)
         _label_last(ax, df[col], color)
-    for start, end in shaded:
-        ax.axvspan(pd.to_datetime(start), pd.to_datetime(end), color=RULE, alpha=0.7, lw=0)
+
+    # Capture the data x-range BEFORE adding axvspans -- otherwise
+    # matplotlib's autoscale extends the x-axis out to whatever the
+    # earliest shaded range starts at (1990 for NBER), and a chart of
+    # post-2024 data gets squeezed into the right edge of a 30-year axis.
+    data_xlim: tuple[Any, Any] | None = None
+    if not df.empty:
+        # Only consider columns that actually have non-NaN values so a
+        # series that's all-NaN doesn't drag the limit to NaT.
+        valid_index = df.dropna(how="all").index
+        if len(valid_index) > 0:
+            data_xlim = (valid_index.min(), valid_index.max())
+
+    # Filter shaded ranges to those that overlap the data window. A
+    # recession that ended decades before our data started is just
+    # noise; drop it.
+    visible_shading: list[tuple[Any, Any]] = []
+    if data_xlim is not None:
+        x_lo, x_hi = pd.to_datetime(data_xlim[0]), pd.to_datetime(data_xlim[1])
+        for start, end in shaded:
+            s, e = pd.to_datetime(start), pd.to_datetime(end)
+            if e < x_lo or s > x_hi:
+                continue
+            visible_shading.append((max(s, x_lo), min(e, x_hi)))
+    else:
+        visible_shading = [(pd.to_datetime(s), pd.to_datetime(e)) for s, e in shaded]
+
+    for s, e in visible_shading:
+        ax.axvspan(s, e, color=RULE, alpha=0.7, lw=0)
+
+    # Pin x-limits to the data range so the spans (or any future
+    # auto-extension) can't stretch the axis beyond what the data covers.
+    if data_xlim is not None:
+        ax.set_xlim(data_xlim)
+
     if len(df.columns) > 4:
         ax.legend(loc="best")
     _layout(fig, title=title, subtitle=subtitle, source=source, as_of=as_of)
@@ -275,13 +308,27 @@ def event_chart(
         ax.plot(df.index, df[col], color=color, label=col)
         _label_last(ax, df[col], color)
 
+    # Same axis-stretch problem as regime_chart: an event placed before
+    # or after the data window would push axvline out and squash the
+    # actual series. Capture the data range, drop out-of-window events,
+    # and pin xlim to keep the chart focused.
+    data_xlim: tuple[Any, Any] | None = None
+    if not df.empty:
+        valid_index = df.dropna(how="all").index
+        if len(valid_index) > 0:
+            data_xlim = (valid_index.min(), valid_index.max())
+
     if len(df.columns):
-        ymin, ymax = ax.get_ylim()
+        _, ymax = ax.get_ylim()
+        x_lo = pd.to_datetime(data_xlim[0]) if data_xlim else None
+        x_hi = pd.to_datetime(data_xlim[1]) if data_xlim else None
         for ev in events:
             try:
                 x = pd.to_datetime(ev["date"])
             except (KeyError, ValueError):
                 continue
+            if x_lo is not None and x_hi is not None and (x < x_lo or x > x_hi):
+                continue  # event lies outside the data window -- skip
             ax.axvline(x, color=TEAL, linewidth=1, linestyle="--", alpha=0.7)
             ax.annotate(
                 ev.get("label", ""),
@@ -295,6 +342,8 @@ def event_chart(
                 va="top",
             )
 
+    if data_xlim is not None:
+        ax.set_xlim(data_xlim)
     if len(df.columns) > 4:
         ax.legend(loc="best")
     _layout(fig, title=title, subtitle=subtitle, source=source, as_of=as_of)

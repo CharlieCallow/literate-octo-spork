@@ -704,7 +704,16 @@ def _build_reading_payload(report: Report, *, public_token: str | None = None) -
     auth-gated reading endpoint and the public share variant."""
     if report.id is None:
         raise HTTPException(500, "Report has no id")
-    if report.stage != ReportStage.done:
+    # Reading mode just needs the post-edit prose + sources -- both land
+    # at the `render` stage. After that, feedback / housekeeping run but
+    # they don't touch the rendered content. Allow any stage from render
+    # onwards so a report whose feedback or housekeeping stage failed can
+    # still be read while we triage.
+    _readable_stages = {
+        ReportStage.render, ReportStage.feedback,
+        ReportStage.housekeeping, ReportStage.done,
+    }
+    if report.stage not in _readable_stages:
         raise HTTPException(400, f"Report is not finished (stage={report.stage})")
 
     import re as _re
