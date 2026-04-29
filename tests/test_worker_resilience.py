@@ -310,3 +310,144 @@ def test_force_fail_rejects_already_terminal_reports(db) -> None:  # type: ignor
         force_fail(report_id, session=session)
     assert exc.value.status_code == 400
     assert "done" in exc.value.detail
+
+
+# ----------------------------------------------------------------------
+# /workers/status diagnostics
+# ----------------------------------------------------------------------
+
+def test_workers_status_surfaces_running_jobs_with_age_and_heartbeat(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The whole point of the /workers page: a live job must report its
+    age plus the gap since the last audit_log event. That's the silent-
+    hang signal -- a job running for 5 minutes with no model_call event
+    in the last 90s is the call that's actually wedged."""
+    monkeypatch.setattr("api.routes.workers.engine", db, raising=False)
+
+    from api.models import AuditLog, Job, ReportStage
+    from api.routes.workers import status
+
+    report_id = _seed_report(db)
+    started_60s_ago = datetime.now(UTC) - timedelta(seconds=60)
+    last_event_25s_ago = datetime.now(UTC) - timedelta(seconds=25)
+    with Session(db) as session:
+        session.add(Job(
+            report_id=report_id, stage=ReportStage.draft,
+            status="running", attempts=1, started_at=started_60s_ago,
+        ))
+        session.add(AuditLog(
+            report_id=report_id, actor="macro-strategist", event="model_call",
+            cost_usd=0.01, created_at=last_event_25s_ago,
+        ))
+        session.commit()
+
+    with Session(db) as session:
+        out = status(session=session)
+    assert len(out.running) == 1
+    j = out.running[0]
+    assert j.report_id == report_id
+    assert j.stage == ReportStage.draft
+    # Age + heartbeat gap should be in the right ballpark (allow slack
+    # for clock drift inside the test).
+    assert j.age_seconds is not None and 50 <= j.age_seconds <= 80
+    assert j.last_event_seconds_ago is not None and 15 <= j.last_event_seconds_ago <= 40
+    assert j.last_event == "model_call"
+    assert j.last_event_actor == "macro-strategist"
+    # Below the standard-mode 15-min lease, so not flagged stuck.
+    assert not j.is_stuck
+    assert j.deadline_seconds is not None and j.deadline_seconds > 60
+
+
+def test_workers_status_flags_stuck_jobs_past_lease(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Standard-mode lease is 15 minutes -- past that and `is_stuck` flips
+    so the dashboard can render it amber."""
+    monkeypatch.setattr("api.routes.workers.engine", db, raising=False)
+
+    from api.models import Job, ReportStage
+    from api.routes.workers import status
+
+    report_id = _seed_report(db)
+    started_long_ago = datetime.now(UTC) - timedelta(minutes=20)
+    with Session(db) as session:
+        session.add(Job(
+            report_id=report_id, stage=ReportStage.draft,
+            status="running", attempts=1, started_at=started_long_ago,
+        ))
+        session.commit()
+
+    with Session(db) as session:
+        out = status(session=session)
+    assert out.running[0].is_stuck
+
+
+def test_workers_status_includes_pending_and_recent_failures(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The page shows three buckets: running, pending (queued), and
+    recent failures. Pending tells the user 'work is waiting'; recent
+    failures tells them 'something just blew up'."""
+    monkeypatch.setattr("api.routes.workers.engine", db, raising=False)
+
+    from api.models import Job, ReportStage
+    from api.routes.workers import status
+
+    report_id = _seed_report(db)
+    now = datetime.now(UTC)
+    with Session(db) as session:
+        session.add(Job(
+            report_id=report_id, stage=ReportStage.research,
+            status="pending", attempts=0,
+        ))
+        session.add(Job(
+            report_id=report_id, stage=ReportStage.draft,
+            status="failed", attempts=2,
+            last_error="APITimeoutError: 120s",
+            finished_at=now - timedelta(minutes=5),
+        ))
+        # Old failure -- should not appear in the recent-window bucket.
+        session.add(Job(
+            report_id=report_id, stage=ReportStage.brief,
+            status="failed", attempts=1,
+            last_error="ancient",
+            finished_at=now - timedelta(hours=4),
+        ))
+        session.commit()
+
+    with Session(db) as session:
+        out = status(session=session)
+    assert len(out.pending) == 1
+    assert out.pending[0].stage == ReportStage.research
+    assert len(out.recent_failures) == 1
+    assert "APITimeoutError" in (out.recent_failures[0].last_error or "")
+
+
+def test_workers_force_fail_endpoint_routes_through_failure_path(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Per-job force-fail must use the same _handle_failure path as a real
+    exception so the next attempt gets queued (within MAX_ATTEMPTS).
+    Otherwise the user clicks the button, the job dies, and the report
+    sits in limbo with no retry."""
+    monkeypatch.setattr("api.routes.workers.engine", db, raising=False)
+
+    from api.models import Job, ReportStage
+    from api.routes.workers import force_fail_job
+
+    report_id = _seed_report(db)
+    with Session(db) as session:
+        session.add(Job(
+            report_id=report_id, stage=ReportStage.draft,
+            status="running", attempts=1,
+            started_at=datetime.now(UTC),
+        ))
+        session.commit()
+        running_id = session.exec(
+            select(Job).where(Job.status == "running")
+        ).first().id  # type: ignore[union-attr]
+
+    with Session(db) as session:
+        out = force_fail_job(running_id, session=session)
+    assert out.status == "failed"
+
+    with Session(db) as session:
+        # A retry pending job should now exist (attempts<MAX_ATTEMPTS).
+        pendings = session.exec(
+            select(Job).where(Job.report_id == report_id, Job.status == "pending")
+        ).all()
+        assert len(pendings) == 1
+        assert pendings[0].stage == ReportStage.draft
