@@ -42,6 +42,7 @@ _DRAFT_CALL_TIMEOUT_S = 240.0
 # Research is tool-using; allow more headroom on deep mode where the
 # analyst may iterate through 10 tool calls.
 _RESEARCH_CALL_TIMEOUT_S: dict[ReportMode, float] = {
+    ReportMode.test:     90.0,
     ReportMode.fast:     180.0,
     ReportMode.standard: 360.0,
     ReportMode.deep:     600.0,
@@ -253,16 +254,46 @@ def _read_sources(wd: Path) -> list[dict[str, str | None]]:
     return data if isinstance(data, list) else []
 
 
-def _next_stage(stage: ReportStage) -> ReportStage:
+# Stages that the test mode skips outright. Each is non-essential for a
+# pipeline smoke run -- the resulting report is shorter and uglier but
+# the brief / research / draft / edit / render path still produces a PDF.
+# Cost target on test mode is sub-$0.05; with these stages omitted we
+# typically land around $0.02.
+TEST_MODE_SKIP_STAGES: frozenset[ReportStage] = frozenset({
+    ReportStage.recruit,       # no ad-hoc specialists
+    ReportStage.charts,        # no chart generation
+    ReportStage.rebuttal,      # no cross-analyst critique
+    ReportStage.redteam,       # no devil's advocate pass
+    ReportStage.audit,         # no post-edit numerical audit
+    ReportStage.feedback,      # no persona-feedback writes
+    ReportStage.housekeeping,  # no house view / tagger / threader / voice stats
+})
+
+# Test mode caps the analyst roster so a 6-person team doesn't fan out
+# into 6 parallel research calls. Two voices is the minimum that still
+# exercises the multi-contributor path (sections + the EIC's coherence
+# pass without rebuttal).
+TEST_MODE_CONTRIBUTOR_CAP = 2
+
+
+def _next_stage(stage: ReportStage, mode: ReportMode = ReportMode.standard) -> ReportStage:
+    """Next stage in the workflow. For test mode, skips ahead past any
+    stage in TEST_MODE_SKIP_STAGES so the cheap pipeline doesn't pay
+    for stages it doesn't run."""
     i = STAGE_ORDER.index(stage)
-    return STAGE_ORDER[i + 1]
+    nxt = STAGE_ORDER[i + 1]
+    if mode == ReportMode.test:
+        while nxt in TEST_MODE_SKIP_STAGES:
+            i = STAGE_ORDER.index(nxt)
+            nxt = STAGE_ORDER[i + 1]
+    return nxt
 
 
 def _models_for(mode: ReportMode) -> dict[str, str]:
     """Pick model IDs per stage based on report mode. Reads through
     app_settings so dashboard overrides take effect immediately."""
     from api import app_settings
-    if mode == ReportMode.fast:
+    if mode in (ReportMode.test, ReportMode.fast):
         m = app_settings.model_haiku()
         return {"editor": m, "analyst": m, "data": m}
     return {
@@ -314,22 +345,30 @@ def _make_analyst(slug: str, cost: CostTracker, audit, model: str) -> Analyst:  
 def _resolved_contributors(report: Report, brief: str) -> list[dict[str, str]]:
     """Resolve which analysts are on this report.
     Priority: explicit team_override on the report -> brief's CONTRIBUTORS
-    section + any temp specialists the Recruiter spun up -> full roster."""
+    section + any temp specialists the Recruiter spun up -> full roster.
+
+    Test mode caps the result to TEST_MODE_CONTRIBUTOR_CAP so a 6-person
+    roster doesn't fan out into 6 parallel research calls."""
+    contributors: list[dict[str, str]] | None = None
     if report.team_override:
         valid = [m for s in report.team_override if (m := _persona_meta(s))]
         if valid:
-            return valid
+            contributors = valid
 
-    parsed = parse_brief(brief)
-    slugs: list[str] = list(parsed["contributor_slugs"])  # type: ignore[arg-type]
-    # Fold in any temp specialists declared in the brief.
-    for spec in parsed.get("adhoc_specialists", []) or []:  # type: ignore[union-attr]
-        s = spec["slug"] if isinstance(spec, dict) else None
-        if s and s not in slugs:
-            slugs.append(s)
+    if contributors is None:
+        parsed = parse_brief(brief)
+        slugs: list[str] = list(parsed["contributor_slugs"])  # type: ignore[arg-type]
+        # Fold in any temp specialists declared in the brief.
+        for spec in parsed.get("adhoc_specialists", []) or []:  # type: ignore[union-attr]
+            s = spec["slug"] if isinstance(spec, dict) else None
+            if s and s not in slugs:
+                slugs.append(s)
+        valid = [m for s in slugs if (m := _persona_meta(s))]
+        contributors = valid or get_roster()
 
-    valid = [m for s in slugs if (m := _persona_meta(s))]
-    return valid or get_roster()
+    if report.mode == ReportMode.test:
+        contributors = contributors[:TEST_MODE_CONTRIBUTOR_CAP]
+    return contributors
 
 
 def _run_concurrently(
@@ -415,6 +454,14 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
     if report.id is None:
         raise ValueError("Report has no id")
 
+    # Test-mode skip: a few stages are non-essential for a smoke run
+    # (charts, rebuttal, redteam, audit, feedback, housekeeping). Bypass
+    # them entirely rather than letting each stage's own no-op path
+    # spend any LLM tokens.
+    if report.mode == ReportMode.test and stage in TEST_MODE_SKIP_STAGES:
+        log.info("test-mode skip: stage=%s report=%s", stage, report.id)
+        return _next_stage(stage, report.mode)
+
     wd = working_dir(report.id)
     audit = audit_hook(report.id)
     cost = _tracker(report)
@@ -464,7 +511,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
                 session.add(r)
                 session.commit()
         _record(report.id, wd, result)
-        return _next_stage(stage)
+        return _next_stage(stage, report.mode)
 
     if stage == ReportStage.recruit:
         # Generate persona files for any temp specialists the EIC flagged.
@@ -476,7 +523,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
 
         if not specs:
             _write(wd / "recruit.md", "_No ad-hoc specialists requested._\n")
-            return _next_stage(stage)
+            return _next_stage(stage, report.mode)
 
         recruiter = Recruiter(cost, audit=audit, model=models["analyst"])
         log_lines: list[str] = []
@@ -537,7 +584,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
                 session.commit()
 
         _write(wd / "recruit.md", "# Recruit stage\n\n" + "\n".join(log_lines) + "\n")
-        return _next_stage(stage)
+        return _next_stage(stage, report.mode)
 
     if stage == ReportStage.research:
         brief = _read(wd / "brief.md")
@@ -571,12 +618,17 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             _record(report.id, wd, result)
             _append_tool_outputs(wd, c["slug"], result)
 
+        # Pre-draft self-audit + coverage check both run extra LLM calls
+        # at research-stage tail. Skip them in test mode -- the goal there
+        # is a cheap pipeline smoke, not a polished report.
+        skip_extras = report.mode == ReportMode.test
+
         # Pre-draft self-audit. Each analyst's notes get a Haiku grounding
         # pass against their slice of the tool ledger -- ungrounded numbers
         # are qualified or struck before the draft stage reads them.
         # Best-effort: if the audit call fails, leave the original notes.
         ledger = _read(wd / "tool-outputs.jsonl")
-        if ledger.strip():
+        if ledger.strip() and not skip_extras:
             try:
                 pre_auditor = Auditor(cost, audit=audit)
                 for c in contributors:
@@ -601,17 +653,18 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         # status in the notes; gaps surface to the EIC at edit time.
         # Best-effort: a failure here just means the EIC works without
         # explicit coverage tagging.
-        try:
-            from api.agents.coverage import Coverage
-            coverage = Coverage(cost, audit=audit)
-            all_notes = _concat_notes(wd, contributors)
-            cov_result = coverage.check(brief=brief, notes=all_notes)
-            _write(wd / "coverage.md", cov_result.text)
-            _record(report.id, wd, cov_result)
-        except Exception:  # noqa: BLE001
-            log.exception("coverage check failed (non-blocking)")
+        if not skip_extras:
+            try:
+                from api.agents.coverage import Coverage
+                coverage = Coverage(cost, audit=audit)
+                all_notes = _concat_notes(wd, contributors)
+                cov_result = coverage.check(brief=brief, notes=all_notes)
+                _write(wd / "coverage.md", cov_result.text)
+                _record(report.id, wd, cov_result)
+            except Exception:  # noqa: BLE001
+                log.exception("coverage check failed (non-blocking)")
 
-        return _next_stage(stage)
+        return _next_stage(stage, report.mode)
 
     if stage == ReportStage.charts:
         dc = DataAndCharts(cost, audit=audit, model=models["data"])
@@ -621,7 +674,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         _write(wd / "data-section.md", result.text)
         _record(report.id, wd, result)
         _append_tool_outputs(wd, "data-and-charts", result)
-        return _next_stage(stage)
+        return _next_stage(stage, report.mode)
 
     if stage == ReportStage.draft:
         brief = _read(wd / "brief.md")
@@ -648,7 +701,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         for c, result in zip(contributors, results, strict=True):
             _write(wd / f"section-{c['slug']}.md", result.text)
             _record(report.id, wd, result)
-        return _next_stage(stage)
+        return _next_stage(stage, report.mode)
 
     if stage == ReportStage.rebuttal:
         # Each analyst sees the peer drafts and writes a one-paragraph
@@ -672,7 +725,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             }
         if len(sections_by_slug) < 2:
             _write(wd / "rebuttals.md", "_Rebuttal stage skipped: fewer than two analyst sections._\n")
-            return _next_stage(stage)
+            return _next_stage(stage, report.mode)
 
         analysts_by_slug = {
             c["slug"]: _make_analyst(c["slug"], cost, audit, models["analyst"])
@@ -713,7 +766,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             if len(rebuttal_lines) > 1
             else "_All analysts agree -- no rebuttals._\n",
         )
-        return _next_stage(stage)
+        return _next_stage(stage, report.mode)
 
     if stage == ReportStage.redteam:
         # Saoirse reads the drafts and writes the strongest counter-thesis.
@@ -740,7 +793,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         except Exception as e:  # noqa: BLE001
             log.exception("redteam stage failed (non-blocking)")
             _write(wd / "redteam.md", f"_red-team pass failed: {e}_\n")
-        return _next_stage(stage)
+        return _next_stage(stage, report.mode)
 
     if stage == ReportStage.edit:
         eic = EditorInChief(cost, audit=audit, model=models["editor"])
@@ -788,7 +841,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         )
         _write(wd / "edited.md", result.text)
         _record(report.id, wd, result)
-        return _next_stage(stage)
+        return _next_stage(stage, report.mode)
 
     if stage == ReportStage.audit:
         # Ground every numerical claim in the edited prose against the
@@ -797,7 +850,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         edited = _read(wd / "edited.md")
         ledger = _read(wd / "tool-outputs.jsonl")
         if not edited.strip() or not ledger.strip():
-            return _next_stage(stage)
+            return _next_stage(stage, report.mode)
         try:
             auditor = Auditor(cost, audit=audit)
             result = auditor.review(edited=edited, tool_outputs_jsonl=ledger)
@@ -807,7 +860,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             log.exception("audit stage failed (non-blocking)")
             _write(wd / "audited.md", "")  # empty marker -> render falls back to edited.md
             _ = e
-        return _next_stage(stage)
+        return _next_stage(stage, report.mode)
 
     if stage == ReportStage.render:
         # Prefer audited prose if the audit stage produced one. Strip the
@@ -822,8 +875,9 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         # Extract structured calls before the cover renders so they can show
         # up in the position tracker. Idempotent: skip if this report already
         # has rows (rerunning render after a fix shouldn't dupe positions).
+        # Test mode skips this LLM call entirely -- no positions on a smoke run.
         from api import calls as calls_mod
-        if not calls_mod.has_calls_for(report.id):
+        if report.mode != ReportMode.test and not calls_mod.has_calls_for(report.id):
             try:
                 contributors_for_calls = _resolved_contributors(report, brief)
                 extractor = calls_mod.CallExtractor(cost, audit=audit)
@@ -903,7 +957,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         except Exception:  # noqa: BLE001
             log.exception("R2 upload failed (non-blocking)")
 
-        return _next_stage(stage)
+        return _next_stage(stage, report.mode)
 
     if stage == ReportStage.feedback:
         eic = EditorInChief(cost, audit=audit, model=models["editor"])
@@ -952,7 +1006,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             refresh_recommendations()
         except Exception:  # noqa: BLE001
             log.exception("recruiter review failed (non-blocking)")
-        return _next_stage(stage)
+        return _next_stage(stage, report.mode)
 
     if stage == ReportStage.housekeeping:
         # Close-the-loop pass: update the rolling house view, tag the report,
@@ -1028,7 +1082,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             except Exception:  # noqa: BLE001
                 log.exception("voice stats failed for %s", c["slug"])
 
-        return _next_stage(stage)
+        return _next_stage(stage, report.mode)
 
     return ReportStage.done
 

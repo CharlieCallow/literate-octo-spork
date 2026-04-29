@@ -34,7 +34,9 @@ class ReportStage(str, Enum):
 
 
 class ReportMode(str, Enum):
-    fast = "fast"          # Haiku-only, no web search, tight iters -- testing
+    test = "test"          # Stripped pipeline (no charts/rebuttal/redteam/audit/feedback/
+                           # housekeeping), 2 analysts max, Haiku, ~$0.02-0.05 -- pipeline smoke
+    fast = "fast"          # Haiku-only, no web search, tight iters -- quick draft
     standard = "standard"  # Opus EIC + Sonnet others, web search on -- default
     deep = "deep"          # Same models as standard, larger iter/token budget -- deep dive
 
