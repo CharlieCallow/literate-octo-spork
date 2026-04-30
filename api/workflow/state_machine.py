@@ -467,6 +467,19 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         return _next_stage(stage, report.mode)
 
     wd = working_dir(report.id)
+    # Hydrate the working dir from R2 before any stage reads files.
+    # Railway rebuilds wipe the local container fs; without this, a
+    # re-run from `edit` (or any stage after the first) finds no
+    # section-*.md / redteam.md / rebuttals.md inputs and produces an
+    # empty REVISED SECTIONS block, rendering as a cover-only PDF. Skip
+    # for `brief` (the first stage) since there's nothing to hydrate.
+    # No-op when R2 isn't configured or all files are already local.
+    if stage != ReportStage.brief:
+        try:
+            from api import storage
+            storage.hydrate_working_dir(report.id, wd)
+        except Exception:  # noqa: BLE001
+            log.exception("R2 hydrate failed (non-blocking)")
     audit = audit_hook(report.id)
     cost = _tracker(report)
     models = _models_for(report.mode)
@@ -1013,12 +1026,33 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             read_minutes=8,
             sources=ordered_sources,
         )
+        # Reading-time + claim-density. Computed off the cited section
+        # bodies (markdown links count as the claim signal -- one link
+        # per claim is the analyst-prompt convention). Persisted on the
+        # Report row so the dashboard can render it without re-parsing.
+        word_count = 0
+        link_count = 0
+        for s in cited_sections:
+            words = re.findall(r"\b\w+\b", s.body_md)
+            word_count += len(words)
+            link_count += len(re.findall(r"\[[^\]]+?\]\(https?://", s.body_md))
+        # 220 wpm is a reasonable middle ground for non-fiction analytical
+        # prose -- light enough for casual readers, fast enough that a
+        # 2000-word report doesn't claim to need 12 minutes.
+        read_minutes_val = max(1, round(word_count / 220.0)) if word_count else 0
+        # Density expressed as links per 100 words. Below ~1 reads as
+        # hand-wavy; above ~4 reads as overstuffed footnotes.
+        density = (link_count * 100.0 / word_count) if word_count else 0.0
+
         with Session(engine) as session:
             r = session.get(Report, report.id)
             if r:
                 r.pdf_path = str(out)
                 r.top_domain = top_dom
                 r.max_domain_share = dom_share
+                r.word_count = word_count
+                r.read_minutes = read_minutes_val
+                r.claim_density = round(density, 2)
                 session.add(r)
                 session.commit()
 

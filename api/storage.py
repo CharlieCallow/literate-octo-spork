@@ -68,9 +68,17 @@ def upload_artifacts(report_id: int, wd: Path) -> int:
         )
         uploaded += 1
 
-    # Markdown sources reading mode rebuilds from. Without these, the working
-    # dir on a fresh container has only the PDF and the reading endpoint 404s.
-    for name in ("brief.md", "edited.md", "data-section.md", "sources.json"):
+    # Markdown sources reading mode rebuilds from + intermediate
+    # artifacts that re-running a stage needs. Without these, a re-run
+    # from `edit` on a fresh container produces an empty REVISED
+    # SECTIONS block (no section-*.md inputs, no redteam.md / rebuttals.md
+    # / glossary.md to thread through the prompts), which renders as a
+    # PDF with cover + disclosures only.
+    for name in (
+        "brief.md", "edited.md", "data-section.md", "sources.json",
+        "redteam.md", "rebuttals.md", "glossary.md", "audited.md",
+        "coverage.md",
+    ):
         f = wd / name
         if f.exists():
             ct = "application/json" if name.endswith(".json") else "text/markdown"
@@ -146,6 +154,47 @@ def fetch_to_local(report_id: int, wd: Path, *parts: str) -> Path | None:
     except Exception as e:  # noqa: BLE001
         log.info("R2 fetch missed report=%d %s: %s", report_id, parts, e)
         return None
+
+
+def hydrate_working_dir(report_id: int, wd: Path) -> int:
+    """Pull every R2 artifact for `report_id` into the local working
+    dir. No-op when the file is already local or R2 isn't on. Used at
+    stage start so a re-run after a Railway rebuild has the inputs it
+    needs (section-*.md, redteam.md, rebuttals.md, etc).
+
+    Returns the number of files fetched."""
+    if not is_r2_enabled():
+        return 0
+    prefix = _key(report_id) + "/"
+    try:
+        resp = _client().list_objects_v2(
+            Bucket=settings.r2_bucket, Prefix=prefix,
+        )
+    except Exception as e:  # noqa: BLE001
+        log.info("R2 list missed report=%d: %s", report_id, e)
+        return 0
+
+    fetched = 0
+    for obj in resp.get("Contents", []) or []:
+        key = obj.get("Key", "")
+        if not key:
+            continue
+        # Strip the report-id prefix to get the path within the working dir.
+        rel = key[len(prefix):]
+        if not rel:
+            continue
+        target = wd / rel
+        if target.exists():
+            continue  # already local; trust the on-disk copy
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            _client().download_file(settings.r2_bucket, key, str(target))
+            fetched += 1
+        except Exception as e:  # noqa: BLE001
+            log.info("R2 fetch missed report=%d key=%s: %s", report_id, key, e)
+    if fetched:
+        log.info("hydrated %d files from R2 for report=%d", fetched, report_id)
+    return fetched
 
 
 def list_chart_files(report_id: int) -> list[str]:

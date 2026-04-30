@@ -321,16 +321,22 @@ def test_upload_artifacts_includes_notes_and_section_files(monkeypatch, tmp_path
     (wd / "notes-macro-strategist.md").write_text("notes", encoding="utf-8")
     (wd / "notes-equity-analyst.md").write_text("notes", encoding="utf-8")
     (wd / "section-macro-strategist.md").write_text("sec", encoding="utf-8")
-    # Unrelated md files should NOT be uploaded -- only notes-*/section-*.
-    (wd / "rebuttals.md").write_text("nope", encoding="utf-8")
+    # Intermediate markdown is now uploaded too -- a re-run from `edit`
+    # after a Railway rebuild needs these as inputs (see hydrate_
+    # working_dir on the read side).
+    (wd / "rebuttals.md").write_text("rebut", encoding="utf-8")
+    (wd / "redteam.md").write_text("bear", encoding="utf-8")
+    # Genuinely-unrelated file should still NOT be uploaded.
+    (wd / "scratch.txt").write_text("nope", encoding="utf-8")
 
     storage_mod.upload_artifacts(42, wd)
     keys = sorted(uploaded)
-    # PDF + brief + edited + 2 notes + 1 section = 5 files we care about.
     assert any("report.pdf" in k for k in keys)
     assert any("notes-macro-strategist.md" in k for k in keys)
     assert any("notes-equity-analyst.md" in k for k in keys)
     assert any("section-macro-strategist.md" in k for k in keys)
-    # rebuttals.md is markdown but not notes-/section- -> intentionally
-    # excluded; reading mode doesn't need it post-render.
-    assert not any("rebuttals.md" in k for k in keys)
+    # Editor-input markdown uploaded so re-runs survive a rebuild.
+    assert any("rebuttals.md" in k for k in keys)
+    assert any("redteam.md" in k for k in keys)
+    # Random non-recognised file is still skipped.
+    assert not any("scratch.txt" in k for k in keys)

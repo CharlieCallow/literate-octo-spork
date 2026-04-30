@@ -36,7 +36,18 @@ export function ArchiveTable() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     let out = reports.filter((r) => {
-      if (q && !r.theme.toLowerCase().includes(q) && !(r.subtitle || "").toLowerCase().includes(q)) return false;
+      if (q) {
+        // Match against theme + subtitle + theme-graph tags so a search
+        // for "rates" / "NVDA" surfaces every report tagged with them
+        // even when the title doesn't mention the term outright.
+        const haystack = [
+          r.theme,
+          r.subtitle || "",
+          ...(r.mentioned_tickers ?? []),
+          ...(r.mentioned_themes ?? []),
+        ].join(" ").toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
       if (stages.size > 0 && !stages.has(r.stage)) return false;
       if (modes.size > 0 && !modes.has(r.mode)) return false;
       return true;

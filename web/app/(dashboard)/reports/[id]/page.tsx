@@ -104,6 +104,19 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
               {report.budget_cap_usd && <> {" · "}Cap: ${report.budget_cap_usd.toFixed(2)}</>}
               {report.team_override.length > 0 && <> {" · "}Team: {report.team_override.join(", ")}</>}
             </p>
+            {(report.read_minutes != null || report.word_count != null) && (
+              <p style={{ margin: "4px 0 0", fontSize: 12 }} className="muted">
+                {report.read_minutes != null && (
+                  <>{report.read_minutes} min read</>
+                )}
+                {report.word_count != null && (
+                  <> · {report.word_count.toLocaleString()} words</>
+                )}
+                {report.claim_density != null && (
+                  <> · {report.claim_density.toFixed(1)} claims per 100 words</>
+                )}
+              </p>
+            )}
             <p style={{ margin: "6px 0 0" }}>
               <RunStatus report={report} />
             </p>

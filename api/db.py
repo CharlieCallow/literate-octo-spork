@@ -128,6 +128,10 @@ def _migrate_sqlite() -> None:
             ("reports", "ALTER TABLE reports ADD COLUMN top_domain VARCHAR"),
             # Test-mode marker (mirror of the Postgres migration above).
             ("reports", "ALTER TABLE reports ADD COLUMN is_test BOOLEAN DEFAULT 0 NOT NULL"),
+            # Reading-time + claim-density metrics.
+            ("reports", "ALTER TABLE reports ADD COLUMN word_count INTEGER"),
+            ("reports", "ALTER TABLE reports ADD COLUMN read_minutes INTEGER"),
+            ("reports", "ALTER TABLE reports ADD COLUMN claim_density REAL"),
         ]
         with engine.connect() as conn:
             for _table, sql in additions:
@@ -155,6 +159,10 @@ def _migrate_sqlite() -> None:
             # filter them out.
             "ALTER TABLE reports ADD COLUMN IF NOT EXISTS is_test BOOLEAN DEFAULT FALSE NOT NULL",
             "CREATE INDEX IF NOT EXISTS ix_reports_is_test ON reports (is_test)",
+            # Reading-time + claim-density metrics.
+            "ALTER TABLE reports ADD COLUMN IF NOT EXISTS word_count INTEGER",
+            "ALTER TABLE reports ADD COLUMN IF NOT EXISTS read_minutes INTEGER",
+            "ALTER TABLE reports ADD COLUMN IF NOT EXISTS claim_density DOUBLE PRECISION",
             # uploaded_documents: created_all() handles fresh deploys; this
             # CREATE-IF-NOT-EXISTS keeps the table present on existing prod
             # databases that pre-date the upload feature.
