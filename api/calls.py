@@ -311,3 +311,166 @@ def graded_history(limit: int = 200) -> list[Call]:
             .limit(limit)
         ).all()
     return list(rows)
+
+
+# ----- Basket / benchmark comparison -----
+
+# Bearish directions get sign-flipped so a falling price reads as a winner.
+_BEARISH = {CallDirection.short, CallDirection.fade, CallDirection.avoid}
+
+
+def basket_vs_benchmark(
+    *,
+    side: str = "all",            # all | long | short
+    min_conviction: int = 1,      # 1..5
+    benchmark: str = "^GSPC",
+) -> dict[str, Any]:
+    """Compute a rolling equal-weighted basket return curve and a benchmark
+    curve over the same window.
+
+    Each day t after a position's `made_at`, the position contributes its
+    daily price return (sign-flipped for bearish directions) until either
+    `evaluated_at` (for closed) or today (for open). The basket's daily
+    return is the mean of all live positions' daily returns; cumulative
+    basket return is the compound product. Benchmark return is the simple
+    cumulative price return of `benchmark` over the same window.
+
+    Returns a JSON-friendly dict the dashboard plots."""
+    import pandas as pd
+
+    from api.data import yfinance as yf_data
+
+    with Session(engine) as session:
+        all_calls = list(session.exec(select(Call)).all())
+
+    # Filter
+    def _keep(c: Call) -> bool:
+        if c.conviction < min_conviction:
+            return False
+        if side == "long" and c.direction != CallDirection.long:
+            return False
+        if side == "short" and c.direction not in _BEARISH:
+            return False
+        if c.price_at_call is None:
+            return False
+        return True
+
+    calls = [c for c in all_calls if _keep(c)]
+    if not calls:
+        return {
+            "dates": [], "basket": [], "benchmark": [],
+            "n_positions": 0, "basket_return": None, "benchmark_return": None,
+            "benchmark_ticker": benchmark, "side": side, "min_conviction": min_conviction,
+        }
+
+    now = datetime.now(UTC)
+    earliest = min(
+        (c.made_at if c.made_at.tzinfo else c.made_at.replace(tzinfo=UTC))
+        for c in calls
+    )
+    age_days = (now - earliest).days
+    if age_days <= 25:
+        period = "3mo"
+    elif age_days <= 170:
+        period = "1y"
+    elif age_days <= 350:
+        period = "2y"
+    else:
+        period = "5y"
+
+    # Fetch price history per unique asset + the benchmark.
+    tickers = {c.asset for c in calls} | {benchmark}
+    closes: dict[str, pd.Series] = {}
+    for t in tickers:
+        try:
+            df = yf_data.get_history(t, period=period, interval="1d")
+        except Exception:  # noqa: BLE001
+            log.exception("history fetch failed for %s", t)
+            continue
+        if df.empty or "Close" not in df.columns:
+            continue
+        s = df["Close"].dropna()
+        if not isinstance(s.index, pd.DatetimeIndex):
+            s.index = pd.to_datetime(s.index)
+        s.index = s.index.tz_localize(None).normalize()
+        closes[t] = s[~s.index.duplicated(keep="last")]
+
+    if benchmark not in closes:
+        return {
+            "dates": [], "basket": [], "benchmark": [],
+            "n_positions": len(calls), "basket_return": None, "benchmark_return": None,
+            "benchmark_ticker": benchmark, "side": side, "min_conviction": min_conviction,
+            "error": f"benchmark {benchmark} unavailable",
+        }
+
+    earliest_naive = pd.Timestamp(earliest).tz_convert(None).normalize() \
+        if pd.Timestamp(earliest).tzinfo else pd.Timestamp(earliest).normalize()
+    bench = closes[benchmark]
+    bench = bench[bench.index >= earliest_naive]
+    if bench.empty:
+        return {
+            "dates": [], "basket": [], "benchmark": [],
+            "n_positions": len(calls), "basket_return": None, "benchmark_return": None,
+            "benchmark_ticker": benchmark, "side": side, "min_conviction": min_conviction,
+        }
+
+    # Trading-day index = benchmark's index from earliest_naive.
+    trading_days = bench.index
+
+    # Per-asset daily returns aligned to trading_days.
+    daily_returns: dict[str, pd.Series] = {}
+    for t, s in closes.items():
+        if t == benchmark:
+            continue
+        s_trim = s[s.index >= (earliest_naive - pd.Timedelta(days=5))]
+        ret = s_trim.pct_change()
+        daily_returns[t] = ret.reindex(trading_days)
+
+    basket_daily = []
+    for d in trading_days:
+        contributions: list[float] = []
+        for c in calls:
+            made = c.made_at if c.made_at.tzinfo else c.made_at.replace(tzinfo=UTC)
+            made_naive = pd.Timestamp(made).tz_convert(None).normalize() \
+                if pd.Timestamp(made).tzinfo else pd.Timestamp(made).normalize()
+            if d <= made_naive:
+                continue
+            if c.evaluated_at is not None:
+                ev = c.evaluated_at if c.evaluated_at.tzinfo else c.evaluated_at.replace(tzinfo=UTC)
+                ev_naive = pd.Timestamp(ev).tz_convert(None).normalize() \
+                    if pd.Timestamp(ev).tzinfo else pd.Timestamp(ev).normalize()
+                if d > ev_naive:
+                    continue
+            r = daily_returns.get(c.asset)
+            if r is None or d not in r.index:
+                continue
+            v = r.loc[d]
+            if v is None or pd.isna(v):
+                continue
+            v = float(v)
+            if c.direction in _BEARISH:
+                v = -v
+            contributions.append(v)
+        basket_daily.append(sum(contributions) / len(contributions) if contributions else 0.0)
+
+    # Compound to cumulative.
+    basket_cum: list[float] = []
+    acc = 1.0
+    for r in basket_daily:
+        acc *= (1.0 + r)
+        basket_cum.append(acc - 1.0)
+
+    bench_first = float(bench.iloc[0])
+    bench_cum = [(float(v) / bench_first - 1.0) if bench_first else 0.0 for v in bench]
+
+    return {
+        "dates": [d.strftime("%Y-%m-%d") for d in trading_days],
+        "basket": basket_cum,
+        "benchmark": bench_cum,
+        "n_positions": len(calls),
+        "basket_return": basket_cum[-1] if basket_cum else None,
+        "benchmark_return": bench_cum[-1] if bench_cum else None,
+        "benchmark_ticker": benchmark,
+        "side": side,
+        "min_conviction": min_conviction,
+    }

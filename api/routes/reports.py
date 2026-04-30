@@ -1352,6 +1352,37 @@ def list_closed_positions() -> list[PositionRow]:
     return [_to_position_row(r) for r in rows]
 
 
+class BasketSeries(BaseModel):
+    dates: list[str]
+    basket: list[float]
+    benchmark: list[float]
+    n_positions: int
+    basket_return: float | None
+    benchmark_return: float | None
+    benchmark_ticker: str
+    side: str
+    min_conviction: int
+    error: str | None = None
+
+
+@router.get("/positions/basket", response_model=BasketSeries, dependencies=[Depends(require_auth)])
+def basket_vs_benchmark(
+    side: str = "all",
+    min_conviction: int = 1,
+    benchmark: str = "^GSPC",
+) -> BasketSeries:
+    """Rolling equal-weighted basket return vs benchmark over the same window.
+    Filters: side (all|long|short), min_conviction (1-5)."""
+    from api import calls as calls_mod
+    if side not in ("all", "long", "short"):
+        side = "all"
+    min_conviction = max(1, min(5, int(min_conviction)))
+    out = calls_mod.basket_vs_benchmark(
+        side=side, min_conviction=min_conviction, benchmark=benchmark,
+    )
+    return BasketSeries(**out)
+
+
 def _to_position_row(c, *, price_current: float | None = None) -> PositionRow:  # type: ignore[no-untyped-def]
     return PositionRow(
         id=c.id or 0,
