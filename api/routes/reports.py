@@ -56,11 +56,18 @@ class ReportOut(BaseModel):
     created_at: datetime
 
     @classmethod
-    def from_db(cls, r: Report) -> ReportOut:
+    def from_db(cls, r: Report, *, check_storage: bool = False) -> ReportOut:
         # Postgres TIMESTAMP strips tzinfo on round-trip; re-attach UTC so the
         # serialised ISO string carries an offset and JS doesn't parse it as
         # local time. Existing rows are already in UTC -- they just lost the tag.
         created_at = r.created_at if r.created_at.tzinfo else r.created_at.replace(tzinfo=UTC)
+        # On Railway the working dir is wiped on every rebuild, which nulls
+        # pdf_path even though the PDF still lives in R2. The /pdf route
+        # already redirects to a signed URL in that case -- expose pdf_url so
+        # the dashboard doesn't fall back to "re-run from brief".
+        has_pdf = bool(r.pdf_path)
+        if not has_pdf and check_storage and r.id and r.stage == ReportStage.done:
+            has_pdf = storage.object_exists(r.id, "report.pdf")
         return cls(
             id=r.id or 0,
             theme=r.theme,
@@ -72,7 +79,7 @@ class ReportOut(BaseModel):
             stage=r.stage,
             error=r.error,
             cost_usd=r.cost_usd,
-            pdf_url=f"/reports/{r.id}/pdf" if r.pdf_path else None,
+            pdf_url=f"/reports/{r.id}/pdf" if has_pdf else None,
             max_domain_share=r.max_domain_share,
             top_domain=r.top_domain,
             is_test=bool(r.is_test),
@@ -192,7 +199,7 @@ def get_report(report_id: int, session: Session = Depends(get_session)) -> Repor
     report = session.get(Report, report_id)
     if not report:
         raise HTTPException(404, "Report not found")
-    return ReportOut.from_db(report)
+    return ReportOut.from_db(report, check_storage=True)
 
 
 @router.get("/{report_id}/charts", dependencies=[Depends(require_auth)])
