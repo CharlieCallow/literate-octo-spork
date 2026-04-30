@@ -132,6 +132,8 @@ def _migrate_sqlite() -> None:
             ("reports", "ALTER TABLE reports ADD COLUMN word_count INTEGER"),
             ("reports", "ALTER TABLE reports ADD COLUMN read_minutes INTEGER"),
             ("reports", "ALTER TABLE reports ADD COLUMN claim_density REAL"),
+            # Per-report render toggles (hide_bylines, hide_positions, ...).
+            ("reports", "ALTER TABLE reports ADD COLUMN render_options JSON DEFAULT '{}'"),
         ]
         with engine.connect() as conn:
             for _table, sql in additions:
@@ -163,6 +165,8 @@ def _migrate_sqlite() -> None:
             "ALTER TABLE reports ADD COLUMN IF NOT EXISTS word_count INTEGER",
             "ALTER TABLE reports ADD COLUMN IF NOT EXISTS read_minutes INTEGER",
             "ALTER TABLE reports ADD COLUMN IF NOT EXISTS claim_density DOUBLE PRECISION",
+            # Per-report render toggles (hide_bylines, hide_positions, ...).
+            "ALTER TABLE reports ADD COLUMN IF NOT EXISTS render_options JSON DEFAULT '{}'::json",
             # uploaded_documents: created_all() handles fresh deploys; this
             # CREATE-IF-NOT-EXISTS keeps the table present on existing prod
             # databases that pre-date the upload feature.

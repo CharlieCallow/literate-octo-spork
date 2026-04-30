@@ -26,6 +26,8 @@ class CreateReport(BaseModel):
     mode: ReportMode = ReportMode.standard
     team_override: list[str] = []          # contributor slugs; empty = let EIC pick
     budget_cap_usd: float | None = None    # overrides global per-report cap
+    # Optional render toggles. See Report.render_options for recognised keys.
+    render_options: dict[str, bool] = {}
 
 
 class ReportOut(BaseModel):
@@ -50,6 +52,7 @@ class ReportOut(BaseModel):
     # search can match by ticker / theme without re-fetching.
     mentioned_tickers: list[str]
     mentioned_themes: list[str]
+    render_options: dict[str, bool]
     created_at: datetime
 
     @classmethod
@@ -78,6 +81,7 @@ class ReportOut(BaseModel):
             claim_density=r.claim_density,
             mentioned_tickers=list(r.mentioned_tickers or []),
             mentioned_themes=list(r.mentioned_themes or []),
+            render_options={k: bool(v) for k, v in (r.render_options or {}).items()},
             created_at=created_at,
         )
 
@@ -95,6 +99,7 @@ def create(payload: CreateReport, session: Session = Depends(get_session)) -> Re
         mode=payload.mode,
         team_override=team,
         budget_cap_usd=payload.budget_cap_usd,
+        render_options={k: bool(v) for k, v in (payload.render_options or {}).items()},
         # Test-mode runs are throwaway smoke tests -- mark them so they
         # don't pollute Scout's "past reports" anchor / archive default /
         # performance ledger / house view.

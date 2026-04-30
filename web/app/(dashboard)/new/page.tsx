@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { AuthGate } from "@/components/Auth";
-import { api, MODE_ESTIMATES, type ReportMode, type TeamMember } from "@/lib/api";
+import { api, MODE_ESTIMATES, type RenderOptions, type ReportMode, type TeamMember } from "@/lib/api";
 
 const MODES: { value: ReportMode; title: string; tagline: string }[] = [
   { value: "test",     title: "Test (smoke)",    tagline: "Stripped pipeline, 2 analysts, no charts/rebuttal/redteam/audit. ~$0.02-0.05." },
@@ -19,6 +19,7 @@ export default function NewReportPage() {
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [pickedSlugs, setPickedSlugs] = useState<string[]>([]);
   const [budgetText, setBudgetText] = useState("");
+  const [renderOptions, setRenderOptions] = useState<RenderOptions>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Trailing-30-day actuals per mode -- ground-truth for the confirm
@@ -76,12 +77,16 @@ export default function NewReportPage() {
           return;
         }
       }
+      const cleaned: RenderOptions = Object.fromEntries(
+        Object.entries(renderOptions).filter(([, v]) => v),
+      );
       const r = await api.createReport({
         theme,
         subtitle: subtitle || undefined,
         mode,
         team_override: pickedSlugs,
         budget_cap_usd,
+        render_options: Object.keys(cleaned).length ? cleaned : undefined,
       });
       // Upload any attached docs before nav so the research stage sees them.
       // Workers poll on a few-second interval, so a quick sequence here is fine.
@@ -188,6 +193,30 @@ export default function NewReportPage() {
             </ul>
           )}
           {uploadStatus && <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>{uploadStatus}</p>}
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <label className="byline">Report options</label>
+          <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+            Toggle off any sections you don't want in the rendered PDF.
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {([
+              { key: "hide_bylines",     label: "Hide author names (cover contributors + per-section bylines)" },
+              { key: "hide_positions",   label: "Hide cover positions table" },
+              { key: "hide_disclosures", label: "Hide disclosures appendix" },
+            ] as { key: keyof RenderOptions; label: string }[]).map((o) => (
+              <label key={o.key} style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer", fontSize: 14 }}>
+                <input
+                  type="checkbox"
+                  checked={!!renderOptions[o.key]}
+                  onChange={(e) => setRenderOptions((cur) => ({ ...cur, [o.key]: e.target.checked }))}
+                  style={{ width: "auto" }}
+                />
+                <span>{o.label}</span>
+              </label>
+            ))}
+          </div>
         </div>
 
         <div style={{ marginBottom: 16 }}>

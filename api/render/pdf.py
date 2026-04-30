@@ -75,6 +75,9 @@ def render_pdf(
     read_minutes: int = 8,
     logo_path: Path | None = None,
     sources: Sequence[dict[str, str | None]] | None = None,
+    hide_bylines: bool = False,
+    hide_positions: bool = False,
+    hide_disclosures: bool = False,
 ) -> Path:
     env = Environment(
         loader=FileSystemLoader(str(TEMPLATES_DIR)),
@@ -86,8 +89,8 @@ def render_pdf(
         {
             "heading": s.heading,
             "body_html": md.render(s.body_md),
-            "author": s.author,
-            "role": s.role,
+            "author": None if hide_bylines else s.author,
+            "role": None if hide_bylines else s.role,
         }
         for s in sections
     ]
@@ -98,8 +101,10 @@ def render_pdf(
         title=title,
         subtitle=subtitle,
         date=date,
-        contributors=[{"name": c.name, "role": c.role} for c in contributors],
+        contributors=[] if hide_bylines else [{"name": c.name, "role": c.role} for c in contributors],
         sections=rendered_sections,
+        hide_positions=hide_positions,
+        hide_disclosures=hide_disclosures,
         house_view_top=house_view_top,
         house_view_bottom=house_view_bottom,
         disagreement_html=md.render(disagreement) if disagreement else None,
