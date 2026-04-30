@@ -36,7 +36,7 @@ from api.render import charts as chart_helpers
 # ---------- FRED ----------
 
 def fred_series_tool() -> Tool:
-    def fn(series_id: str, start: str | None = None, end: str | None = None, max_points: int = 240) -> str:
+    def fn(series_id: str, start: str | None = None, end: str | None = None, max_points: int = 240, **_: Any) -> str:
         s = fred.get_series(series_id, start=start, end=end)
         if max_points and len(s) > max_points:
             s = s.iloc[-max_points:]
@@ -330,6 +330,7 @@ def make_chart_tool(out_dir: Path) -> Tool:
         compare_with: str | None = None,
         events: list[dict[str, str]] | None = None,
         shaded: str | None = None,
+        **_: Any,
     ) -> str:
         try:
             df, src_label = _frame(source, series_or_ticker, period=period, start=start, end=end)
