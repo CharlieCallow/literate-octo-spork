@@ -59,6 +59,7 @@ export interface PositionRow {
   price_at_call: number | null;
   evaluated_at: string | null;
   price_at_evaluation: number | null;
+  price_current: number | null;
   outcome: "hit" | "miss" | "partial" | null;
 }
 

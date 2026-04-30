@@ -22,6 +22,16 @@ export default function PositionsPage() {
   const closedTotal = (closed ?? []).length;
   const overallHitRate = closedTotal > 0 ? (closedHits + 0.5 * closedPartials) / closedTotal : null;
 
+  const openPnl = (open ?? [])
+    .map((c) => {
+      if (!c.price_at_call || !c.price_current) return null;
+      const raw = ((c.price_current - c.price_at_call) / c.price_at_call) * 100;
+      return c.direction === "short" || c.direction === "fade" ? -raw : raw;
+    })
+    .filter((p): p is number => p !== null);
+  const openWinners = openPnl.filter((p) => p > 0.5).length;
+  const openLosers = openPnl.filter((p) => p < -0.5).length;
+
   return (
     <AuthGate>
       <h1 style={{ color: "var(--forte-navy)", marginTop: 4 }}>Positions</h1>
@@ -54,11 +64,20 @@ export default function PositionsPage() {
           >
             Closed ({closed?.length ?? "…"})
           </button>
-          {overallHitRate !== null && (
-            <span className="muted" style={{ marginLeft: "auto", fontSize: 13 }}>
-              Firm hit rate: <strong style={{ color: "var(--forte-navy)" }}>{(overallHitRate * 100).toFixed(0)}%</strong>
-            </span>
-          )}
+          <span className="muted" style={{ marginLeft: "auto", fontSize: 13, display: "flex", gap: 16 }}>
+            {openPnl.length > 0 && (
+              <span>
+                Open: <strong style={{ color: "#1F7A3A" }}>{openWinners} up</strong>
+                {" / "}
+                <strong style={{ color: "#B8860B" }}>{openLosers} down</strong>
+              </span>
+            )}
+            {overallHitRate !== null && (
+              <span>
+                Firm hit rate: <strong style={{ color: "var(--forte-navy)" }}>{(overallHitRate * 100).toFixed(0)}%</strong>
+              </span>
+            )}
+          </span>
         </div>
       </div>
 
@@ -90,36 +109,43 @@ function PositionsTable({ rows, closed }: { rows: PositionRow[]; closed: boolean
           <th style={th}>View</th>
           <th style={th}>Horizon</th>
           <th style={th}>Target</th>
+          <th style={th}>Entry</th>
+          <th style={th}>{closed ? "At grade" : "Now"}</th>
+          <th style={th}>P/L</th>
           <th style={th}>Conviction</th>
           <th style={th}>Made</th>
           <th style={th}>By</th>
           {closed && <th style={th}>Outcome</th>}
-          {closed && <th style={th}>Move</th>}
           <th style={th}>Report</th>
         </tr>
       </thead>
       <tbody>
         {rows.map((r) => {
-          const move = r.price_at_call && r.price_at_evaluation
-            ? ((r.price_at_evaluation - r.price_at_call) / r.price_at_call) * 100
+          const reference = closed ? r.price_at_evaluation : r.price_current;
+          const rawMove = r.price_at_call && reference
+            ? ((reference - r.price_at_call) / r.price_at_call) * 100
             : null;
+          // Flip sign for short/fade so a falling price reads as a winner.
+          const pnl = rawMove !== null && (r.direction === "short" || r.direction === "fade")
+            ? -rawMove
+            : rawMove;
           return (
             <tr key={r.id} style={{ borderBottom: "1px solid var(--forte-rule)" }}>
               <td style={td}><strong>{r.asset}</strong></td>
               <td style={{ ...td, color: dirColor(r.direction), fontWeight: 600 }}>{r.direction}</td>
               <td style={td}>{r.horizon_days}d</td>
-              <td style={td}>{r.target_level ?? "—"}</td>
+              <td style={td}>{r.target_level !== null ? fmtPrice(r.target_level) : "—"}</td>
+              <td style={td}>{r.price_at_call !== null ? fmtPrice(r.price_at_call) : "—"}</td>
+              <td style={td}>{reference !== null ? fmtPrice(reference) : "—"}</td>
+              <td style={{ ...td, color: pnlColor(pnl), fontWeight: 600 }}>
+                {pnl !== null ? `${pnl > 0 ? "+" : ""}${pnl.toFixed(1)}%` : "—"}
+              </td>
               <td style={td}>{"★".repeat(r.conviction)}</td>
               <td style={td}>{r.made_at.slice(0, 10)}</td>
               <td style={td}>{r.contributor_slug}</td>
               {closed && (
                 <td style={{ ...td, color: outcomeColor(r.outcome), fontWeight: 600 }}>
                   {r.outcome ?? "—"}
-                </td>
-              )}
-              {closed && (
-                <td style={{ ...td, color: move !== null && move > 0 ? "#1F7A3A" : "#B8860B" }}>
-                  {move !== null ? `${move > 0 ? "+" : ""}${move.toFixed(1)}%` : "—"}
                 </td>
               )}
               <td style={td}>
@@ -131,6 +157,19 @@ function PositionsTable({ rows, closed }: { rows: PositionRow[]; closed: boolean
       </tbody>
     </table>
   );
+}
+
+function fmtPrice(p: number): string {
+  if (p >= 1000) return p.toFixed(0);
+  if (p >= 10) return p.toFixed(2);
+  return p.toFixed(3);
+}
+
+function pnlColor(p: number | null): string {
+  if (p === null) return "var(--forte-muted)";
+  if (p > 0.5) return "#1F7A3A";
+  if (p < -0.5) return "#B8860B";
+  return "var(--forte-ink)";
 }
 
 const th: React.CSSProperties = { textAlign: "left", padding: "6px 8px", fontWeight: 600 };

@@ -1316,6 +1316,7 @@ class PositionRow(BaseModel):
     price_at_call: float | None
     evaluated_at: datetime | None
     price_at_evaluation: float | None
+    price_current: float | None = None
     outcome: str | None
 
 
@@ -1324,7 +1325,16 @@ def list_open_positions() -> list[PositionRow]:
     """Calls that haven't matured yet -- the firm's current stance."""
     from api import calls as calls_mod
     rows = calls_mod.open_positions()
-    return [_to_position_row(r) for r in rows]
+    # Live spot for unmatured calls so the dashboard can show winners/losers.
+    # _spot_price hits a 1h-cached yfinance fetch.
+    current_by_asset: dict[str, float | None] = {}
+    for r in rows:
+        if r.asset not in current_by_asset:
+            try:
+                current_by_asset[r.asset] = calls_mod._spot_price(r.asset)
+            except Exception:  # noqa: BLE001
+                current_by_asset[r.asset] = None
+    return [_to_position_row(r, price_current=current_by_asset.get(r.asset)) for r in rows]
 
 
 @router.get("/positions/closed", response_model=list[PositionRow], dependencies=[Depends(require_auth)])
@@ -1335,7 +1345,7 @@ def list_closed_positions() -> list[PositionRow]:
     return [_to_position_row(r) for r in rows]
 
 
-def _to_position_row(c) -> PositionRow:  # type: ignore[no-untyped-def]
+def _to_position_row(c, *, price_current: float | None = None) -> PositionRow:  # type: ignore[no-untyped-def]
     return PositionRow(
         id=c.id or 0,
         report_id=c.report_id,
@@ -1350,6 +1360,7 @@ def _to_position_row(c) -> PositionRow:  # type: ignore[no-untyped-def]
         price_at_call=c.price_at_call,
         evaluated_at=c.evaluated_at,
         price_at_evaluation=c.price_at_evaluation,
+        price_current=price_current,
         outcome=c.outcome.value if c.outcome and hasattr(c.outcome, "value") else None,
     )
 
