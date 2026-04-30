@@ -229,6 +229,77 @@ def _strip_conviction_tags(md: str) -> str:
     return _CONVICTION_TAG_RE.sub("", md)
 
 
+# Em dashes and en dashes leak into the prose despite the persona briefs
+# telling analysts to avoid them. Replace them at render time so the PDF
+# never carries one. ` -- ` (space-em-space) becomes a comma; an em-dash
+# pressed against a word becomes a regular hyphen.
+_EM_DASH_RE = re.compile(r"\s*[—–]\s*")
+
+
+def _strip_em_dashes(md: str) -> str:
+    def repl(m: re.Match[str]) -> str:
+        s = m.group(0)
+        # Preserved-as-line-break em dashes (rare): a dash sitting alone on
+        # a line should just disappear rather than introduce a stray comma.
+        if "\n" in s:
+            return "\n"
+        # Spaces on both sides => parenthetical, replace with a comma.
+        if s.startswith(" ") and s.endswith(" "):
+            return ", "
+        # Otherwise (word-attached) collapse to a plain hyphen.
+        return "-"
+    return _EM_DASH_RE.sub(repl, md)
+
+
+# Sentences where the editor has the analysts addressing each other by
+# name ("Marcus is right to push on it", "as Saoirse notes", "to Marcus's
+# point") read as backstage chatter in the final report. The render stage
+# strips them based on the live contributor list.
+_META_VERBS = (
+    "is right", "has a point", "is correct", "nails it", "has it right",
+    "notes", "points out", "argues", "writes", "warns", "concedes",
+    "objects", "pushes back", "would push back", "would say", "said",
+    "says", "puts it", "put it", "has it", "is wrong", "is overstating",
+)
+
+
+def _strip_meta_dialogue(md: str, names: list[str]) -> str:
+    """Drop sentences that name a contributor and read as agent-to-agent
+    aside ("Marcus is right to push on it"). Conservative: only matches a
+    sentence that contains a known first name immediately followed by one
+    of the meta verbs, or by a possessive ("Marcus's point").
+
+    `names` should be the set of first names of every contributing analyst
+    on the report (plus the EIC and the devil's advocate)."""
+    if not md or not names:
+        return md
+    # Build an alternation of names; sort longest-first so "Marcus Liu"
+    # would match before "Marcus" if we ever pass a multi-word name.
+    cleaned = [re.escape(n.strip()) for n in names if n and n.strip()]
+    if not cleaned:
+        return md
+    name_alt = "|".join(sorted(set(cleaned), key=len, reverse=True))
+    verb_alt = "|".join(re.escape(v) for v in _META_VERBS)
+    # A "sentence" is a run of text terminated by .!? followed by space or
+    # end-of-string. Match the whole sentence so we drop it cleanly.
+    sentence_re = re.compile(
+        rf"(?:(?<=^)|(?<=[\s>]))[^.!?\n]*?\b(?:{name_alt})(?:'s|’s)?\s+(?:{verb_alt})\b[^.!?\n]*[.!?]",
+        re.IGNORECASE,
+    )
+    out = sentence_re.sub("", md)
+    # Possessive form: "to Marcus's point", "Marcus's read", etc.
+    poss_re = re.compile(
+        rf"(?:(?<=^)|(?<=[\s>]))[^.!?\n]*?\b(?:to\s+)?(?:{name_alt})(?:'s|’s)\s+(?:point|read|take|note|call)\b[^.!?\n]*[.!?]",
+        re.IGNORECASE,
+    )
+    out = poss_re.sub("", out)
+    # Tidy double spaces / orphan whitespace introduced by the cuts.
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    out = re.sub(r"\n[ \t]+\n", "\n\n", out)
+    out = re.sub(r"\n{3,}", "\n\n", out)
+    return out
+
+
 MAX_SOURCES = 18  # cap the Sources section so the report stays tidy
 
 
@@ -1037,7 +1108,23 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         audited = _read(wd / "audited.md").strip()
         edited = audited or _read(wd / "edited.md")
         edited = _strip_conviction_tags(edited)
+        edited = _strip_em_dashes(edited)
         brief = _read(wd / "brief.md")
+        # Strip agent-to-agent meta-talk ("Marcus is right to push on it",
+        # "as Saoirse notes") using the live contributor first names. The
+        # devils-advocate slug isn't on the formal roster but earns a
+        # name-strip too.
+        meta_names: list[str] = []
+        for c in _resolved_contributors(report, brief):
+            first = (c.get("name") or "").strip().split()
+            if first:
+                meta_names.append(first[0])
+        meta_names.extend([
+            (EIC_DISPLAY["name"] or "").split()[0],
+            (DC_DISPLAY["name"] or "").split()[0],
+            "Saoirse",  # devils-advocate (red-team)
+        ])
+        edited = _strip_meta_dialogue(edited, [n for n in meta_names if n])
         parsed = parse_edited(edited)
 
         # Extract structured calls before the cover renders so they can show
@@ -1620,34 +1707,25 @@ def _compute_section_overlap(
 
 # ---------- helpers ----------
 
-_COVER_TITLE_MAX_CHARS = 50
-_COVER_TITLE_MAX_WORDS = 6
+_COVER_TITLE_HOOK_MAX_WORDS = 10
 
 
 def _cover_title(title: str) -> str:
-    """Trim a long theme sentence to a punchy cover-friendly headline.
+    """Return a cover-friendly headline. Never adds an ellipsis -- the cover
+    layout shrinks long titles via CSS rather than truncating them, so the
+    reader always sees the full headline.
 
-    A 26-word theme wraps to four lines on the cover and reads like an
-    abstract; the previous reports landed two-word titles plus a subtitle
-    and the trade-off the reviewer flagged was that the long form was
-    spelling out the conclusion before the reader even opened the PDF.
-    Strategy: split on the first colon (most long themes use one to
-    separate hook from detail), then take up to N words / chars."""
+    The one transform we still do: when a theme is written as
+    ``hook: detail``, prefer the hook on the cover and let the subtitle
+    carry the detail. Anything else passes through verbatim."""
     t = (title or "").strip()
     if not t:
         return t
-    # Prefer the pre-colon hook if there is one and it's already short.
     if ":" in t:
         hook = t.split(":", 1)[0].strip()
-        if 2 <= len(hook.split()) <= _COVER_TITLE_MAX_WORDS and len(hook) <= _COVER_TITLE_MAX_CHARS:
+        if 2 <= len(hook.split()) <= _COVER_TITLE_HOOK_MAX_WORDS:
             return hook
-    if len(t) <= _COVER_TITLE_MAX_CHARS and len(t.split()) <= _COVER_TITLE_MAX_WORDS:
-        return t
-    words = t.split()
-    truncated = " ".join(words[:_COVER_TITLE_MAX_WORDS]).rstrip(",;:.-")
-    if len(truncated) > _COVER_TITLE_MAX_CHARS:
-        truncated = truncated[:_COVER_TITLE_MAX_CHARS].rstrip(",;:.- ") + "…"
-    return truncated
+    return t
 
 
 def _heading(md: str) -> str | None:
@@ -1850,11 +1928,12 @@ def _inline_charts(body: str, wd: Path, *, used: set[str] | None = None) -> str:
     """Replace `[chart: filename.png]` tags with <figure><img> blocks.
 
     Pass a shared `used` set across multiple calls (e.g. one per section) to
-    guarantee each chart renders at most once across the full document. If the
-    referenced chart is missing or already used, fall back to the next available
-    chart in the directory; surplus refs are stripped silently."""
+    guarantee each chart renders at most once across the full document. If
+    the referenced chart is missing or already used, drop the reference
+    silently -- substituting an unrelated chart from the directory makes
+    the prose's commentary refer to the wrong picture, which reads as a
+    placeholder chart slipping into the final report."""
     charts_dir = (wd / "charts").resolve()
-    available: list[Path] = sorted(charts_dir.glob("*.png")) if charts_dir.exists() else []
     if used is None:
         used = set()
 
@@ -1864,12 +1943,6 @@ def _inline_charts(body: str, wd: Path, *, used: set[str] | None = None) -> str:
         if path.exists() and fname not in used:
             used.add(fname)
             return f'\n<figure><img src="{path.as_uri()}" alt="{fname}"></figure>\n'
-        # Substitute the next unused chart in the directory.
-        for cand in available:
-            if cand.name not in used:
-                used.add(cand.name)
-                return f'\n<figure><img src="{cand.as_uri()}" alt="{cand.name}"></figure>\n'
-        # No charts left. Drop the reference quietly.
         return ""
 
     return _CHART_TAG_RE.sub(repl, body)

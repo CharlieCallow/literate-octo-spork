@@ -170,13 +170,16 @@ def persist(report_id: int, parsed: list[dict[str, Any]]) -> int:
                 price_at_call = _spot_price(c["asset"])
             except Exception:  # noqa: BLE001
                 price_at_call = None
+            target_level = _sanitise_target(
+                direction=c["direction"], target=c["target_level"], spot=price_at_call,
+            )
             session.add(Call(
                 report_id=report_id,
                 contributor_slug=c["contributor_slug"],
                 asset=c["asset"],
                 direction=CallDirection(c["direction"]),
                 horizon_days=c["horizon_days"],
-                target_level=c["target_level"],
+                target_level=target_level,
                 conviction=c["conviction"],
                 claim_text=c["claim_text"],
                 price_at_call=price_at_call,
@@ -184,6 +187,28 @@ def persist(report_id: int, parsed: list[dict[str, Any]]) -> int:
             inserted += 1
         session.commit()
     return inserted
+
+
+def _sanitise_target(*, direction: str, target: float | None,
+                     spot: float | None) -> float | None:
+    """Drop a price target that contradicts the call direction or sits
+    absurdly far from spot. The extractor occasionally lifts a stale figure
+    from the analyst's prose (e.g. a `$68` target on a name now trading
+    $159) -- when the number is plainly wrong, surfacing nothing on the
+    cover beats surfacing a wrong number."""
+    if target is None or spot is None or spot <= 0 or target <= 0:
+        return target
+    # A long target below spot, or a short/fade target above spot, is a
+    # direction contradiction -- drop it.
+    if direction == "long" and target <= spot:
+        return None
+    if direction in ("short", "fade") and target >= spot:
+        return None
+    # Sanity envelope: real targets sit within ~0.25x..4x of spot. Anything
+    # outside almost always means a stale or mis-extracted number.
+    if not (spot * 0.25 <= target <= spot * 4.0):
+        return None
+    return target
 
 
 def _spot_price(ticker: str) -> float | None:

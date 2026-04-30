@@ -38,12 +38,28 @@ def _style() -> None:
 def _layout(fig: plt.Figure, *, title: str, subtitle: str, source: str, as_of: str) -> None:
     """Place title / subtitle / source attribution at deterministic figure
     coordinates and lock the axes box. Avoids title/subtitle collisions that
-    happened when matplotlib's auto-layout interacted with bbox=tight."""
-    fig.text(0.06, 0.94, title, fontsize=14, fontweight="bold", color=NAVY, ha="left")
+    happened when matplotlib's auto-layout interacted with bbox=tight.
+
+    `parse_math=False` is critical: a `$` in a title (e.g. "$VST target $185")
+    otherwise triggers matplotlib's mathtext mode, which renders the math
+    span in a non-bold italic font and leaves the chart with a half-bold
+    title. Disabling math parsing keeps the whole title in one weight."""
+    fig.text(0.06, 0.94, title, fontsize=14, fontweight="bold", color=NAVY,
+             ha="left", parse_math=False)
     if subtitle:
-        fig.text(0.06, 0.895, subtitle, fontsize=11, color=MUTED, ha="left")
-    fig.text(0.06, 0.04, f"Source: {source}. As of {as_of}.", fontsize=9, color=MUTED, ha="left")
-    fig.subplots_adjust(top=0.83, bottom=0.16, left=0.07, right=0.95)
+        fig.text(0.06, 0.895, subtitle, fontsize=11, color=MUTED, ha="left",
+                 parse_math=False)
+    fig.text(0.06, 0.04, f"Source: {source}. As of {as_of}.", fontsize=9,
+             color=MUTED, ha="left", parse_math=False)
+    fig.subplots_adjust(top=0.83, bottom=0.18, left=0.07, right=0.95)
+    # Rotate date-like x-tick labels so a wide series ('2018-Q1', '2019-Q1',
+    # ...) doesn't overlap into an unreadable smear at the bottom of the
+    # chart. Applies to every axis on the figure (twin-axis comparisons,
+    # subplots, etc.).
+    for ax in fig.axes:
+        for label in ax.get_xticklabels():
+            label.set_rotation(30)
+            label.set_horizontalalignment("right")
 
 
 def _annotate_source(ax: plt.Axes, source: str, as_of: str) -> None:  # legacy shim

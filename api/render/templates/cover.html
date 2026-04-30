@@ -1,8 +1,14 @@
 <section class="cover">
   <img class="logo" src="{{ logo_path }}" alt="Forte Research">
-  <h1>{{ title }}</h1>
+  <h1 class="{% if title|length > 80 %}xlong{% elif title|length > 50 %}long{% endif %}">{{ title }}</h1>
   <p class="subtitle">{{ subtitle }}</p>
   <div class="rule"></div>
+
+  {% if house_view_top %}
+  <div class="callout callout--house cover-house-view">
+    <span class="label">House view.</span> {{ house_view_top }}
+  </div>
+  {% endif %}
 
   {% if positions and not hide_positions %}
   <div class="positions">

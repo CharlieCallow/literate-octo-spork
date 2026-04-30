@@ -9,16 +9,10 @@
 
 {% include "cover.html" %}
 
-{% if house_view_top %}
-<div class="callout callout--house">
-  <span class="label">House view.</span> {{ house_view_top }}
-</div>
-{% endif %}
-
 {% for section in sections %}
   <h2>{{ section.heading }}</h2>
   {% if section.author %}
-  <p class="byline">By <span class="name">{{ section.author }}</span>{% if section.role %} — {{ section.role }}{% endif %}</p>
+  <p class="byline">By <span class="name">{{ section.author }}</span>{% if section.role %} - {{ section.role }}{% endif %}</p>
   {% endif %}
   {{ section.body_html | safe }}
 {% endfor %}
@@ -50,13 +44,6 @@
 </section>
 {% endif %}
 
-{# Disclosures sit immediately after the glossary so they can tuck onto the
-   tail of the glossary page if there's room. CSS gives .disclosures a
-   page-break-before: avoid; .glossary forces a fresh page itself. #}
-{% if not hide_disclosures %}
-{% include "disclosures.html" %}
-{% endif %}
-
 {% if sources %}
 <section class="sources">
   <h2>Sources</h2>
@@ -64,11 +51,16 @@
     {% for s in sources %}
     <li id="cite-{{ s.n }}" value="{{ s.n }}">
       <a href="{{ s.url }}">{{ s.title or s.url }}</a>
-      <span class="muted-tag">— {{ s.source }}</span>
+      <span class="muted-tag">- {{ s.source }}</span>
     </li>
     {% endfor %}
   </ol>
 </section>
+{% endif %}
+
+{# Disclosures are the final page of the report, after Sources. #}
+{% if not hide_disclosures %}
+{% include "disclosures.html" %}
 {% endif %}
 
 </body>

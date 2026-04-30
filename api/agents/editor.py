@@ -320,6 +320,10 @@ Disagreement: if two analyst sections take directionally different positions on 
 
 Bear integration: take the strongest objection from Saoirse's note and put it in the BEAR CASE block. Two sentences only. Sentence one: where we'd be wrong (the thesis-level objection in your voice). Sentence two MUST start with "When we'll know we're wrong:" and name a specific calendar-anchored falsification trigger (a print, a filing, a vote, a level breach by date). Both halves live HERE. Do not restate either in CLOSING.
 
+House rules (non-negotiable):
+- NO em dashes anywhere in the prose. Use commas, hyphens, or full stops. The render layer will scrub any that slip through, but you should not write them in the first place.
+- The report is the firm's external voice -- it does NOT reference the analysts by name as if they're talking to each other. Cut every "Marcus is right to push on it", "as Saoirse notes", "to Tomás's point", "Eli would push back". Bylines on each section already credit the author; the body never says one analyst's name in another's voice. If two sections genuinely disagree, surface it in the DISAGREEMENT block in the third person ("the desk is split: one view holds X, the other Y") -- never with a name.
+
 Closing discipline: CLOSING is "what to watch" only -- the 1-2 indicators that, if they move, change the trade. It is NOT a pre-mortem, NOT a falsification trigger, NOT a recap of the bear case. If you find yourself writing "when we'll know we're wrong" in CLOSING, you have failed -- that line lives in BEAR CASE. The reviewer's previous critique flagged five end-of-report sections doing variations of "here's what could break the thesis" and we are collapsing them: BEAR CASE owns the objection AND the falsifier, CLOSING owns the watchlist, nothing else.
 
 Return JSON-ish markdown in EXACTLY this structure (use the literal headings — they're parsed):
