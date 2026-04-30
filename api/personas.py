@@ -111,6 +111,39 @@ def seed_from_filesystem() -> int:
         return added
 
 
+def ensure_standing_from_filesystem() -> int:
+    """Idempotently insert any new top-level team/*.md persona that isn't in
+    the DB yet. Existing rows are left alone — DB is source of truth for
+    edits, feedback logs, and status. Returns the number inserted.
+
+    Only scans team/*.md (standing roster + orchestrators). Temp specialists
+    are created at runtime by the Recruiter; archived personas are managed
+    via status transitions. Newly-checked-in persona files therefore land
+    automatically on the next deploy without overwriting live state."""
+    added = 0
+    with Session(engine) as session:
+        existing_slugs = {p.slug for p in session.exec(select(Persona)).all()}
+        for path in sorted(settings.team_dir.glob("*.md")):
+            slug = path.stem
+            if slug in existing_slugs:
+                continue
+            text = path.read_text(encoding="utf-8")
+            name, role = _parse_header(text)
+            session.add(Persona(
+                slug=slug,
+                status=PersonaStatus.standing,
+                markdown=text,
+                name=name,
+                role=role,
+                is_orchestrator=slug in ORCHESTRATOR_SLUGS,
+            ))
+            added += 1
+        if added:
+            session.commit()
+            log.info("inserted %d new standing personas from filesystem", added)
+    return added
+
+
 def hydrate_filesystem() -> None:
     """Write every Persona row to its expected path on disk. Called at startup
     to restore team/, team/temp/, team/archive/ from DB after a rebuild."""
