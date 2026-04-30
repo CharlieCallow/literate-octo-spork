@@ -50,6 +50,13 @@
 </section>
 {% endif %}
 
+{# Disclosures sit immediately after the glossary so they can tuck onto the
+   tail of the glossary page if there's room. CSS gives .disclosures a
+   page-break-before: avoid; .glossary forces a fresh page itself. #}
+{% if not hide_disclosures %}
+{% include "disclosures.html" %}
+{% endif %}
+
 {% if sources %}
 <section class="sources">
   <h2>Sources</h2>
@@ -62,10 +69,6 @@
     {% endfor %}
   </ol>
 </section>
-{% endif %}
-
-{% if not hide_disclosures %}
-{% include "disclosures.html" %}
 {% endif %}
 
 </body>

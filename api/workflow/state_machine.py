@@ -985,6 +985,25 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         edited = audited or _read(wd / "edited.md")
         edited = _strip_conviction_tags(edited)
         brief = _read(wd / "brief.md")
+
+        # Stylist: a Haiku pass that may insert page-break markers in the
+        # prose to tidy the rendered layout (kill orphaned charts, prevent
+        # half-page gaps). Best-effort and structural only -- if the model
+        # rewrites anything beyond inserting break divs, we discard the
+        # output. Skipped on test mode.
+        if report.mode != ReportMode.test:
+            try:
+                from api.agents.stylist import Stylist, merge as merge_stylist
+                stylist = Stylist(cost, audit=audit)
+                st_result = stylist.polish(edited_prose=edited)
+                _record(report.id, wd, st_result)
+                polished = merge_stylist(edited, st_result.text or "")
+                if polished != edited:
+                    _write(wd / "styled.md", polished)
+                    edited = polished
+            except Exception:  # noqa: BLE001
+                log.exception("stylist pass failed (non-blocking)")
+
         parsed = parse_edited(edited)
 
         # Extract structured calls before the cover renders so they can show
