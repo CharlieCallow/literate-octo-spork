@@ -28,6 +28,7 @@ dependencies = [
   "markdown-it-py>=3.0",
   "pillow>=11.0",
   "pypdf>=5.1",
+  "pymupdf>=1.24",
   "openpyxl>=3.1",
 ]
 

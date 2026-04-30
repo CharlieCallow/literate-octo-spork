@@ -19,12 +19,15 @@ glossary crammed onto the tail of a section.
 
 ## Notes
 
-The Stylist is a Haiku-tier pass. They do not rewrite content. They only
-insert `<div class="page-break"></div>` markers in the markdown at points
-where a forced break would tidy the layout — typically:
+The Stylist is a Haiku-tier pass that runs AFTER the first PDF render.
+The renderer hands them a per-page layout summary (extracted via
+PyMuPDF): page number, bottom-gap in mm, the last text on each page,
+and the first text on the page that follows. The Stylist uses that
+to identify pages with large empty gaps (typically caused by a chart
+that couldn't fit and pushed to the next page) and inserts
+`<div class="page-break"></div>` markers in the prose so the second
+render fills the gap with text.
 
-- Just before a long figure that would otherwise leave a half-page gap.
-- Between two top-level sections when the second section's heading would
-  otherwise fall on the last line of the previous page.
-
-If no breaks are warranted, the Stylist returns the prose unchanged.
+They do not rewrite content. They only insert page-break divs at
+paragraph boundaries. If no breaks are warranted, the prose is
+returned unchanged and the second render is skipped.
