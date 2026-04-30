@@ -45,8 +45,28 @@ class CallExtractor(Agent):
             **kwargs,  # type: ignore[arg-type]
         )
 
-    def extract(self, *, prose: str, contributor_slugs: list[str]) -> AgentResult:
+    def extract(
+        self,
+        *,
+        prose: str,
+        contributor_slugs: list[str],
+        redteam_prose: str | None = None,
+    ) -> AgentResult:
         slug_list = ", ".join(contributor_slugs) or "(none)"
+        # Devil's advocate is a non-roster slug but earns a row when she
+        # surfaces a "trade we're missing" the team hadn't put on. Include
+        # her so the cover position table reflects redteam dissent rather
+        # than only restating the team's own calls.
+        redteam_blob = (
+            "\n\nRED-TEAM NOTE (Saoirse Mok, devils-advocate slug `devils-advocate`). "
+            "If she names a specific instrument under 'THE TRADE WE'RE MISSING' or "
+            "calls a position in the body wrong instrument / wrong horizon, attribute "
+            "her replacement call to `devils-advocate`. If she explicitly says a call "
+            "the team made is the WRONG short or wrong instrument, DROP the team's "
+            "version of that call from your output -- her note overrides:\n\n"
+            f"{redteam_prose}\n"
+            if redteam_prose and redteam_prose.strip() else ""
+        )
         prompt = f"""You are a forecast extractor. Read the report below and return one row per directional call the analysts make. A "directional call" is a claim with all of:
 - a tradable asset (stock ticker, ETF, FX pair, commodity, crypto -- something yfinance can price)
 - a direction: long | short | fade | avoid
@@ -55,11 +75,13 @@ class CallExtractor(Agent):
 
 Skip pure observations ("CPI is 3.2%"), pure framing ("the Fed is data-dependent"), and recommendations without a horizon. If you can't pin all four required fields confidently, drop the row -- under-recording is fine.
 
-CONTRIBUTOR SLUGS available (use exactly one of these as the contributor field): {slug_list}
+RECONCILIATION RULE (this is the failure mode we keep hitting): if the body's nearest verdict on the asset is a HOLD ("tactical hold", "neutral", "wait", "no position", "stand aside"), DROP the row. A "hold" is not a directional call. Likewise if the body says "downgrade to hold" or "no longer long", drop -- the cover position table cannot show a long on a name the body explicitly demotes.
+
+CONTRIBUTOR SLUGS available (use exactly one of these as the contributor field, plus `devils-advocate` if a red-team note is provided): {slug_list}
 
 REPORT:
 
-{prose}
+{prose}{redteam_blob}
 
 Return STRICT JSON in this shape and nothing else (no prose, no code fence):
 
