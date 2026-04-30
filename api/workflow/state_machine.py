@@ -868,6 +868,38 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         chart_summary = _list_charts(wd / "charts")
         bear_note = _read(wd / "redteam.md").strip()
 
+        # Degraded-section fold-in. If any contributor's section file is
+        # missing or a stub (data pull failed, draft timed out, etc.), the
+        # EIC is told which beats are missing + their brief assignment so
+        # they can be absorbed into a neighbouring section's prose rather
+        # than rendered as a "Section pulled" recovery note. Audit stage
+        # is the safety net if the EIC skips the directive.
+        stub_slugs = _stub_contributor_slugs(wd, contributors)
+        degraded_sections: list[dict[str, str]] = []
+        if stub_slugs:
+            brief_contributor_lines: dict[str, str] = {}
+            # Pull each missing slug's one-line brief from the CONTRIBUTORS
+            # block so the EIC has the structural points to fold in.
+            for line in brief.splitlines():
+                m = re.match(
+                    r"\s*[-*]\s*`([a-z0-9][a-z0-9-]*)`\s*:\s*(.+)$", line,
+                )
+                if m:
+                    brief_contributor_lines[m.group(1)] = m.group(2).strip()
+            slug_to_meta = {c["slug"]: c for c in contributors}
+            for slug in stub_slugs:
+                meta = slug_to_meta.get(slug, {})
+                degraded_sections.append({
+                    "slug": slug,
+                    "name": meta.get("name", slug),
+                    "role": meta.get("role", ""),
+                    "assignment": brief_contributor_lines.get(slug, "(no brief assignment recorded)"),
+                })
+            log.warning(
+                "edit: %d contributor section(s) missing/stub for report %s -- folding into neighbours: %s",
+                len(stub_slugs), report.id, ", ".join(stub_slugs),
+            )
+
         # Cross-analyst rebuttals -- raw material for the DISAGREEMENT block.
         rebuttals = _parse_rebuttals(_read(wd / "rebuttals.md"))
 
@@ -898,6 +930,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             source_diversity=source_diversity,
             coverage_gaps=coverage_gaps_list or None,
             differentiation=differentiation_md,
+            degraded_sections=degraded_sections or None,
         )
         _write(wd / "edited.md", result.text)
         _record(report.id, wd, result)
@@ -938,8 +971,28 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         # can carry chart-agent failure markers straight to render.
         data_section = _read(wd / "data-section.md")
         cleaned, failures = _scrub_failure_markers(edited)
+        # Hard gate: any REVISED SECTIONS block whose body is still a
+        # recovery stub after the EIC's degraded-section fold-in directive
+        # ran (or the directive failed) gets removed entirely. We never
+        # ship a section header followed by an editor-handwave paragraph.
+        cleaned, dropped_headings = _drop_stub_revised_sections(cleaned)
         cleaned_data, data_failures = _scrub_failure_markers(data_section)
         all_failures = failures + data_failures
+        if dropped_headings:
+            log.warning(
+                "audit: dropped %d stub section(s) from prose for report %s: %s",
+                len(dropped_headings), report.id, "; ".join(dropped_headings),
+            )
+            with Session(engine) as session:
+                r = session.get(Report, report.id)
+                if r:
+                    note = (
+                        "Audit gate dropped stub section(s) the EIC failed to "
+                        "fold into a neighbour: " + "; ".join(dropped_headings)
+                    )
+                    r.error = (r.error + "\n\n" + note) if r.error else note
+                    session.add(r)
+                    session.commit()
         if all_failures:
             log.warning(
                 "audit: stripped %d failure marker(s) from prose for report %s",
@@ -996,12 +1049,19 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             try:
                 contributors_for_calls = _resolved_contributors(report, brief)
                 extractor = calls_mod.CallExtractor(cost, audit=audit)
+                redteam_text = _read(wd / "redteam.md").strip()
+                if redteam_text.lower().startswith("_red-team pass failed"):
+                    redteam_text = ""
                 ext_result = extractor.extract(
                     prose=edited,
                     contributor_slugs=[c["slug"] for c in contributors_for_calls],
+                    redteam_prose=redteam_text or None,
                 )
                 parsed_calls = calls_mod.parse_extracted(ext_result.text)
+                # Saoirse contributes via the redteam pass, not the roster --
+                # whitelist her slug so her "trade we're missing" call survives.
                 slug_set = {c["slug"] for c in contributors_for_calls}
+                slug_set.add("devils-advocate")
                 clean = [c for c in parsed_calls if c["contributor_slug"] in slug_set]
                 calls_mod.persist(report.id, clean)
                 _record(report.id, wd, ext_result)
@@ -1037,6 +1097,24 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             subtitle = r.subtitle if r else None
 
         from api.citations import attach_inline_citations, domain_distribution
+        # Chart-vs-title audit. Quarantine charts whose title makes a claim
+        # the underlying data can't support (categorical title with date
+        # index, "X vs Y" with one series, etc.). Quarantined PNGs get a
+        # `.suspect` suffix so `_inline_charts` substitutes the next
+        # available chart for any prose reference. Best-effort.
+        try:
+            from api.render.chart_audit import audit_charts_dir, format_report
+            failed_charts = audit_charts_dir(wd / "charts")
+            if failed_charts:
+                note = format_report(failed_charts)
+                with Session(engine) as session:
+                    r = session.get(Report, report.id)
+                    if r and note:
+                        r.error = (r.error + "\n\n" + note) if r.error else note
+                        session.add(r)
+                        session.commit()
+        except Exception:  # noqa: BLE001
+            log.exception("chart audit failed (non-blocking)")
         raw_sections = _sections_for_render(parsed, wd)
 
         # Glossary appendix: a Haiku pass over the edited prose tags
@@ -1051,7 +1129,24 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             try:
                 from api.agents.glossary import Glossary, is_empty
                 glossary = Glossary(cost, audit=audit)
-                gl_result = glossary.build(edited_prose=edited)
+                # Pass the equity layer's ticker -> issuer resolutions so the
+                # glossary inherits them rather than running its own free
+                # lookup (which is how "TLN = Talon Metals" sneaks in for a
+                # report whose central pair trade is long Talen Energy).
+                from api.data import yfinance as _yf
+                ticker_resolutions: dict[str, str] = {}
+                for c in calls_mod.calls_for_report(report.id):
+                    if c.asset and c.asset not in ticker_resolutions:
+                        try:
+                            name = _yf.get_ticker_name(c.asset)
+                        except Exception:  # noqa: BLE001
+                            name = None
+                        if name:
+                            ticker_resolutions[c.asset] = name
+                gl_result = glossary.build(
+                    edited_prose=edited,
+                    ticker_resolutions=ticker_resolutions or None,
+                )
                 gl_text = gl_result.text or ""
                 _record(report.id, wd, gl_result)
                 _write(wd / "glossary.md", gl_text)
@@ -1089,9 +1184,17 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         ]
 
         opts = report.render_options or {}
+        # Cover title cap. The theme often comes in as a 20+ word sentence
+        # ("The operator complex is mispriced against the uranium tape, and
+        # TMI is the SMR obituary written by the buyer"); on a cover that
+        # wraps to four lines and buries the lede. Cap to ~6 words / 50
+        # chars and let the subtitle carry the detail. Already-short themes
+        # pass through untouched.
+        title_full = report.theme.title() if report.theme.islower() else report.theme
+        title_cover = _cover_title(title_full)
         render_kwargs: dict[str, object] = dict(
             out_path=out,
-            title=report.theme.title() if report.theme.islower() else report.theme,
+            title=title_cover,
             subtitle=subtitle or parsed.get("opening", "").split("\n")[0][:120],
             date=date.today().isoformat(),
             contributors=contributors_credits,
@@ -1343,6 +1446,11 @@ _FAILURE_LINE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\[red-?team[^\]]*?failed[^\]]*\]", re.I),
     # Italicised "_red-team pass failed: ..._" form from redteam.py.
     re.compile(r"_(?:red-?team|audit|coverage|charts?)[^_\n]*?failed[^_\n]*_", re.I),
+    # Editor handwave forms: "[Editor's note: ... data pull failed at draft
+    # time. Section pulled.]" style. The audit gate also detects these
+    # downstream and drops the whole section block.
+    re.compile(r"\[Editor'?s? note:[^\]]*?(?:failed|pulled|unavailable|missing)[^\]]*\]", re.I),
+    re.compile(r"\[section\s+(?:pulled|omitted|unavailable)[^\]]*\]", re.I),
 )
 # Sentence-level admissions that also need stripping -- whole sentence goes.
 _FAILURE_SENTENCE_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -1351,6 +1459,66 @@ _FAILURE_SENTENCE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"[^.!?\n]*\bmax\s+iterations\s+reached\b[^.!?\n]*[.!?]?", re.I),
     re.compile(r"[^.!?\n]*\bagent\s+halted\b[^.!?\n]*[.!?]?", re.I),
 )
+
+
+# Body content under this many non-marker characters reads as a recovery
+# stub, not a section. Picked from inspecting the failure mode the reviewer
+# flagged: a real analyst section is 800+ chars; the "Section pulled."
+# editor handwave was ~120 chars including the marker itself.
+_STUB_BODY_THRESHOLD = 120
+
+
+def _is_stub_body(body: str) -> bool:
+    """True if a section body is essentially a recovery note rather than prose.
+    Strips failure markers + the "(section omitted...)" sentinel + whitespace
+    and checks the residue length."""
+    if not body or not body.strip():
+        return True
+    cleaned, _ = _scrub_failure_markers(body)
+    cleaned = re.sub(r"_\(section omitted[^)]*\)_", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return len(cleaned) < _STUB_BODY_THRESHOLD
+
+
+def _stub_contributor_slugs(
+    wd: Path, contributors: list[dict[str, str]],
+) -> list[str]:
+    """Slugs whose `section-{slug}.md` file is missing, empty, or a stub.
+    Used at edit stage to tell the EIC which beats need folding into a
+    neighbour rather than rendered as their own (broken) section."""
+    out: list[str] = []
+    for c in contributors:
+        body = _read(wd / f"section-{c['slug']}.md")
+        if _is_stub_body(_strip_heading(body) if body.strip() else ""):
+            out.append(c["slug"])
+    return out
+
+
+def _drop_stub_revised_sections(edited: str) -> tuple[str, list[str]]:
+    """Hard gate: walk REVISED SECTIONS blocks and remove any whose body is a
+    recovery stub. Returns (rewritten, dropped_headings). The render stage
+    must NEVER show a section header followed by "[section pulled]" -- that
+    leaks pipeline state into the reader's eye."""
+    m = _REVISED_RE.search(edited)
+    if not m:
+        return edited, []
+    block = m.group(1)
+    dropped: list[str] = []
+    kept_chunks: list[str] = []
+    last = 0
+    for sm in _SECTION_BLOCK_RE.finditer(block):
+        body = sm.group("body").strip()
+        if _is_stub_body(body):
+            dropped.append(sm.group("heading").strip())
+            kept_chunks.append(block[last:sm.start()])
+            last = sm.end()
+            continue
+    if not dropped:
+        return edited, []
+    kept_chunks.append(block[last:])
+    new_block = "".join(kept_chunks)
+    rewritten = edited[:m.start(1)] + new_block + edited[m.end(1):]
+    return rewritten, dropped
 
 
 def _scrub_failure_markers(text: str) -> tuple[str, list[str]]:
@@ -1451,6 +1619,36 @@ def _compute_section_overlap(
 
 
 # ---------- helpers ----------
+
+_COVER_TITLE_MAX_CHARS = 50
+_COVER_TITLE_MAX_WORDS = 6
+
+
+def _cover_title(title: str) -> str:
+    """Trim a long theme sentence to a punchy cover-friendly headline.
+
+    A 26-word theme wraps to four lines on the cover and reads like an
+    abstract; the previous reports landed two-word titles plus a subtitle
+    and the trade-off the reviewer flagged was that the long form was
+    spelling out the conclusion before the reader even opened the PDF.
+    Strategy: split on the first colon (most long themes use one to
+    separate hook from detail), then take up to N words / chars."""
+    t = (title or "").strip()
+    if not t:
+        return t
+    # Prefer the pre-colon hook if there is one and it's already short.
+    if ":" in t:
+        hook = t.split(":", 1)[0].strip()
+        if 2 <= len(hook.split()) <= _COVER_TITLE_MAX_WORDS and len(hook) <= _COVER_TITLE_MAX_CHARS:
+            return hook
+    if len(t) <= _COVER_TITLE_MAX_CHARS and len(t.split()) <= _COVER_TITLE_MAX_WORDS:
+        return t
+    words = t.split()
+    truncated = " ".join(words[:_COVER_TITLE_MAX_WORDS]).rstrip(",;:.-")
+    if len(truncated) > _COVER_TITLE_MAX_CHARS:
+        truncated = truncated[:_COVER_TITLE_MAX_CHARS].rstrip(",;:.- ") + "…"
+    return truncated
+
 
 def _heading(md: str) -> str | None:
     for line in md.splitlines():

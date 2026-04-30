@@ -204,6 +204,7 @@ Be opinionated. This is the brief the team works from.
         source_diversity: dict[str, object] | None = None,
         coverage_gaps: list[str] | None = None,
         differentiation: str | None = None,
+        degraded_sections: list[dict[str, str]] | None = None,
     ) -> AgentResult:
         sec_blob = "\n\n---\n\n".join(
             f"## SECTION ({s['author']} — {s.get('role','analyst')}): {s['heading']}\n\n{s['body']}"
@@ -260,6 +261,32 @@ Be opinionated. This is the brief the team works from.
                 "Two voices saying the same thing is the failure mode.\n"
             )
 
+        # Degraded-section directive: if a contributor's section file was
+        # missing or a recovery stub at edit time, fold their structural
+        # points (from the brief's CONTRIBUTORS line) into a neighbouring
+        # section's prose. Do NOT render their section heading with an
+        # "Editor's note: ... section pulled" paragraph -- the audit gate
+        # downstream drops anything that looks like that, so a header without
+        # a fold-in just disappears with the reader knowing nothing of why.
+        degraded_blob = ""
+        if degraded_sections:
+            lines = "\n".join(
+                f"- `{d['slug']}` ({d.get('name','')} / {d.get('role','')}): {d.get('assignment','')}"
+                for d in degraded_sections
+            )
+            degraded_blob = (
+                "\nDEGRADED SECTIONS (these analysts' drafts failed at "
+                "research/draft time and there is NO body to revise):\n\n"
+                f"{lines}\n\n"
+                "DO NOT output a `## ...` block for these slugs. Instead, "
+                "absorb the structural points each one would have made (per "
+                "their brief assignment above) into the most adjacent "
+                "surviving analyst section's prose, in that analyst's voice. "
+                "One paragraph max per fold-in. Do NOT mention the failure, "
+                "do NOT write 'editor's note', do NOT leave a placeholder "
+                "heading. The reader should never know a section was pulled.\n"
+            )
+
         # Brief-coverage gaps: questions the brief asked that the research
         # didn't answer. The EIC should either close them in the edit or kill
         # them rather than letting orphans through.
@@ -286,14 +313,14 @@ SECTIONS:
 CHARTS:
 
 {chart_summary}
-{bear_blob}{rebuttal_blob}{diversity_blob}{differentiation_blob}{coverage_blob}
+{bear_blob}{rebuttal_blob}{diversity_blob}{differentiation_blob}{degraded_blob}{coverage_blob}
 Conviction tags: analysts mark claims with `{{c1}}` to `{{c5}}` (1 = throwaway, 5 = high conviction). CULL `{{c1}}` and `{{c2}}` claims when you compress; keep `{{c3}}+`. The tags themselves are stripped before render — just use them as a signal for what to cut.
 
 Disagreement: if two analyst sections take directionally different positions on the same question, surface it in the DISAGREEMENT block — name both views, name who holds each, name the data point that would resolve it. Voice through difference is the goal; consensus is the failure mode. If everyone agrees, write "(none)" and the section is skipped. If you have CROSS-ANALYST REBUTTALS above, mine them first — that's where the disagreement is on the record. The DISAGREEMENT block must surface a DIFFERENT axis from BEAR CASE — bear case is the external counter-thesis (Saoirse), disagreement is internal-team friction. If the only disagreement on the table is "Saoirse thinks the bull case is wrong," write "(none)" — that's redteam, not desk disagreement.
 
-Bear integration: take the strongest objection from Saoirse's note and put it in the BEAR CASE block — one paragraph in your voice, framed as "where we'd be wrong." Don't refute it — name it.
+Bear integration: take the strongest objection from Saoirse's note and put it in the BEAR CASE block. Two sentences only. Sentence one: where we'd be wrong (the thesis-level objection in your voice). Sentence two MUST start with "When we'll know we're wrong:" and name a specific calendar-anchored falsification trigger (a print, a filing, a vote, a level breach by date). Both halves live HERE. Do not restate either in CLOSING.
 
-Closing discipline: BEAR CASE is the thesis-level objection (where the call is wrong). The CLOSING pre-mortem is the FALSIFICATION TRIGGER (the dated, observable event that proves the call wrong). Do NOT restate BEAR CASE in CLOSING. If you find yourself writing the same idea in both, the pre-mortem is failing — rewrite it as a specific calendar-anchored trigger (a print, a filing, a vote, a level breach) rather than a thesis recap.
+Closing discipline: CLOSING is "what to watch" only -- the 1-2 indicators that, if they move, change the trade. It is NOT a pre-mortem, NOT a falsification trigger, NOT a recap of the bear case. If you find yourself writing "when we'll know we're wrong" in CLOSING, you have failed -- that line lives in BEAR CASE. The reviewer's previous critique flagged five end-of-report sections doing variations of "here's what could break the thesis" and we are collapsing them: BEAR CASE owns the objection AND the falsifier, CLOSING owns the watchlist, nothing else.
 
 Return JSON-ish markdown in EXACTLY this structure (use the literal headings — they're parsed):
 
@@ -315,15 +342,13 @@ Return JSON-ish markdown in EXACTLY this structure (use the literal headings —
 <If two sections disagree directionally, one short paragraph naming both views, who holds them, and what would resolve it. Otherwise write exactly: (none)>
 
 # BEAR CASE
-<One short paragraph in your voice integrating Saoirse's strongest objection: where we'd be wrong, and what falsifies the thesis. If there's no bear note, write exactly: (none)>
+<Two sentences. Sentence 1: where we'd be wrong (the thesis-level objection, your voice, integrating Saoirse). Sentence 2: must start with the literal phrase "When we'll know we're wrong:" and name a specific dated falsification trigger. If there's no bear note, write exactly: (none)>
 
 # HOUSE VIEW (BOTTOM)
 <one short sentence — the bottom-line takeaway, navy callout at the end of the report.>
 
 # CLOSING
-<two short paragraphs:
-1. What to watch — the 1-2 indicators that, if they move, change the trade.
-2. Pre-mortem. Lead with the literal phrase "When we'll know we're wrong:" followed by a falsifying condition tied to a specific date or window (e.g. "by Q3 2026", "if the Sept FOMC dot plot revises higher"). Be specific enough that future-you can decide unambiguously whether the call worked.>
+<One short paragraph. The 1-2 indicators we are watching that, if they move, change the trade. Specific (a print, a filing window, a level). Watchlist only -- no pre-mortem, no falsification language, no thesis recap; that lives in BEAR CASE.>
 """
         # 8192 (Sonnet/Haiku ceiling) instead of 4096. With 4-6 contributors
         # the output is OPENING + HOUSE VIEW (TOP) + REVISED SECTIONS x N

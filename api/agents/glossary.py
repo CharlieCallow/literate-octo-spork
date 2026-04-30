@@ -30,8 +30,31 @@ class Glossary(Agent):
             **kwargs,  # type: ignore[arg-type]
         )
 
-    def build(self, *, edited_prose: str) -> AgentResult:
-        prompt = f"""You are writing a Glossary appendix for a Forte Research report. Read the edited prose and identify terms a generalist reader wouldn't know on first appearance: acronyms ("HBM", "TAM", "BAUFV"), domain jargon ("operator margin", "ASO", "convoyance"), regulatory codes ("ITC", "PJM"), drug names, niche tickers used non-obviously, etc.
+    def build(
+        self,
+        *,
+        edited_prose: str,
+        ticker_resolutions: dict[str, str] | None = None,
+    ) -> AgentResult:
+        # Ticker resolutions come from the same yfinance pull the equity
+        # analyst used. Pin them so a ticker that collides with an unrelated
+        # company name (TLN -> Talon Metals vs. the actual Talen Energy) gets
+        # the same answer in the glossary as in the position table.
+        resolutions_blob = ""
+        if ticker_resolutions:
+            lines = "\n".join(
+                f"- **{tk}** = {name}"
+                for tk, name in sorted(ticker_resolutions.items())
+            )
+            resolutions_blob = (
+                "\nTICKER RESOLUTIONS (authoritative -- the equity analyst pulled "
+                "price history for these tickers and got these issuers; if you "
+                "define any of these tickers in the glossary, use this name "
+                "verbatim and DO NOT cross-reference an unrelated company that "
+                "shares the symbol):\n\n"
+                f"{lines}\n"
+            )
+        prompt = f"""You are writing a Glossary appendix for a Forte Research report. Read the edited prose and identify terms a generalist reader wouldn't know on first appearance: acronyms ("HBM", "TAM", "BAUFV"), domain jargon ("operator margin", "ASO", "convoyance"), regulatory codes ("ITC", "PJM"), drug names, niche tickers used non-obviously, etc.{resolutions_blob}
 
 For each term: one short definition that earns its keep -- the kind a smart reader skims and goes "ok, got it" without slowing down. No academic bloat.
 

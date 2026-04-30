@@ -39,8 +39,11 @@ def test_eic_edit_prompt_requires_pre_mortem() -> None:
         eic.edit(brief="b", sections=[], chart_summary="(none)")
 
     p = captured["prompt"]
+    # Falsification language now lives inside BEAR CASE (the previous split
+    # between BEAR CASE and a separate CLOSING pre-mortem produced redundant
+    # paragraphs at the end of the report; collapsed to a single block).
     assert "When we'll know we're wrong" in p
-    assert "falsifying condition" in p
+    assert "falsification trigger" in p
 
 
 def test_analyst_draft_prompt_requires_forecast_horizons() -> None:
