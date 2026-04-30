@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     r2_access_key: str = ""
     r2_secret_key: str = ""
 
+    # Public base URL for the dashboard, used to build absolute links in
+    # the RSS feed and any future webhook payload. Empty -> RSS items
+    # carry relative paths (still valid; readers usually resolve against
+    # the feed URL).
+    public_base_url: str = ""
+
     # M3: Scout daily digest scheduling + email delivery
     scout_auto_run: bool = False
     scout_daily_time: str = "07:00"  # HH:MM local time

@@ -34,6 +34,14 @@ export interface Report {
   top_domain?: string | null;
   // Throwaway smoke run -- excluded from archive default + Scout history.
   is_test?: boolean;
+  // Reading-time + claim-density. Filled at render time.
+  word_count?: number | null;
+  read_minutes?: number | null;
+  claim_density?: number | null;
+  // Theme-graph tags. Used by the archive search box for ticker /
+  // theme matching.
+  mentioned_tickers?: string[];
+  mentioned_themes?: string[];
 }
 
 export interface PositionRow {

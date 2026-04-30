@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -15,6 +15,7 @@ from api import storage, uploads
 from api.auth import require_auth
 from api.db import get_session
 from api.models import AuditLog, Job, Report, ReportMode, ReportStage, UploadedDocument
+from api.settings import settings
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -42,6 +43,13 @@ class ReportOut(BaseModel):
     max_domain_share: float | None
     top_domain: str | None
     is_test: bool
+    word_count: int | None
+    read_minutes: int | None
+    claim_density: float | None
+    # Theme-graph tags (set in housekeeping). Surfaced so the archive
+    # search can match by ticker / theme without re-fetching.
+    mentioned_tickers: list[str]
+    mentioned_themes: list[str]
     created_at: datetime
 
     @classmethod
@@ -65,6 +73,11 @@ class ReportOut(BaseModel):
             max_domain_share=r.max_domain_share,
             top_domain=r.top_domain,
             is_test=bool(r.is_test),
+            word_count=r.word_count,
+            read_minutes=r.read_minutes,
+            claim_density=r.claim_density,
+            mentioned_tickers=list(r.mentioned_tickers or []),
+            mentioned_themes=list(r.mentioned_themes or []),
             created_at=created_at,
         )
 
@@ -95,6 +108,63 @@ def create(payload: CreateReport, session: Session = Depends(get_session)) -> Re
     session.add(job)
     session.commit()
     return ReportOut.from_db(report)
+
+
+@router.get("/feed.xml")
+def feed(session: Session = Depends(get_session)) -> Response:
+    """RSS 2.0 feed of recently-completed reports.
+
+    Public (no auth) by design -- subscription readers don't carry
+    Forte's basic-auth header. Each item links to the report's public
+    share URL when one's been minted; otherwise to the dashboard URL
+    (which gates on auth, so an unauthenticated reader will see the
+    sign-in prompt). Excludes test-mode and unfinished runs."""
+    cutoff = datetime.now(UTC) - timedelta(days=180)
+    rows = session.exec(
+        select(Report)
+        .where(Report.stage == ReportStage.done)
+        .where(Report.is_test == False)  # noqa: E712
+        .where(Report.created_at >= cutoff)
+        .order_by(Report.created_at.desc())  # type: ignore[attr-defined]
+        .limit(50)
+    ).all()
+
+    from xml.sax.saxutils import escape as _xml_escape
+    base = (settings.public_base_url or "").rstrip("/")
+    now_str = datetime.now(UTC).strftime("%a, %d %b %Y %H:%M:%S +0000")
+
+    def _item(r: Report) -> str:
+        if r.share_token and base:
+            link = f"{base}/share/{r.id}/{r.share_token}"
+        elif base:
+            link = f"{base}/reports/{r.id}"
+        else:
+            link = f"/reports/{r.id}"
+        title = _xml_escape(r.theme)
+        subtitle = _xml_escape(r.subtitle or "")
+        pub_at = r.created_at if r.created_at.tzinfo else r.created_at.replace(tzinfo=UTC)
+        pub_str = pub_at.strftime("%a, %d %b %Y %H:%M:%S +0000")
+        return (
+            f"<item>"
+            f"<title>{title}</title>"
+            f"<link>{_xml_escape(link)}</link>"
+            f"<guid isPermaLink=\"false\">forte-report-{r.id}</guid>"
+            f"<pubDate>{pub_str}</pubDate>"
+            f"<description>{subtitle}</description>"
+            f"</item>"
+        )
+
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<rss version="2.0"><channel>'
+        '<title>Forte Research</title>'
+        f'<link>{_xml_escape(base or "/")}</link>'
+        '<description>Reports published by the Forte Research desk.</description>'
+        f'<lastBuildDate>{now_str}</lastBuildDate>'
+        + "".join(_item(r) for r in rows)
+        + '</channel></rss>'
+    )
+    return Response(content=body, media_type="application/rss+xml")
 
 
 @router.get("", response_model=list[ReportOut], dependencies=[Depends(require_auth)])

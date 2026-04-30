@@ -66,6 +66,13 @@ class Report(SQLModel, table=True):
     # Render-time fills this in; >40% triggers a "lazy research" flag in the UI.
     max_domain_share: float | None = None
     top_domain: str | None = None
+    # Reading-time + claim-density. Computed at render time off the
+    # edited prose. word_count counts words across all sections; the
+    # claim_density is "links per 100 words" -- a rough proxy for
+    # how data-anchored the writing is (vs hand-wavy summary).
+    word_count: int | None = None
+    read_minutes: int | None = None
+    claim_density: float | None = None
     stage: ReportStage = Field(default=ReportStage.queued, index=True)
     error: str | None = None
     pdf_path: str | None = None
