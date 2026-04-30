@@ -205,8 +205,8 @@ YOUR COLLEAGUES' SECTIONS:
 Write ONE paragraph (60-120 words). Stay in your voice -- this is your name on it.
 
 - Name the colleague and the specific claim you'd push back on (quote a phrase if it helps).
-- Say *why* you disagree -- evidence, framing, conviction calibration, or risk you think they've underweighted.
-- Be specific about the directional difference: are you more bearish, longer horizon, different beneficiary?
+- The most useful disagreement is on EPISTEMOLOGY -- which evidence is load-bearing. If you'd weight your kind of evidence (filings vs. central-bank language vs. positioning data vs. flows) differently than they did, say so. "You're trading this off the regime; I'm trading it off the supplier mix" is the disagreement worth the EIC's space.
+- Or: same direction, different evidence; same evidence, different conclusion; right call, wrong horizon. Be specific about which it is.
 - If you genuinely don't disagree with anything substantive, write the literal phrase "(no substantive disagreement)" and stop -- don't manufacture one.
 
 Output the paragraph and nothing else. No headings, no preamble.
@@ -225,6 +225,8 @@ YOUR NOTES:
 {notes}
 
 Output a single section in markdown. Start with a brief inline header (## <Section heading>). 200-400 words. Reference charts inline as `[chart: <filename>]` if you want one rendered (Data & Charts will produce them). Cite real sources inline using markdown links `[anchor text](https://url)` -- the renderer turns these into numbered footnotes. Do not invent data or URLs -- only use figures and links from your notes.
+
+Stay in your lane. Your persona file lists the kind of evidence you treat as load-bearing -- earnings-call language and 10-Q line items, or central-bank text and positioning data, or whatever the file actually says. Your section should rest on YOUR evidence type, not your colleague's. If you find yourself making a claim whose load-bearing evidence is the kind of thing a different analyst on this report would cite, either drop the claim or reframe it through your own evidence. Two analysts arguing the same point with the same data is the failure mode -- two analysts arguing through different epistemologies is the goal.
 
 Conviction tags. After every substantive opinion or directional claim (not boring facts), append a conviction tag in curly braces: `{{c1}}` (throwaway, weak signal), `{{c2}}` (low — could be wrong), `{{c3}}` (base case — fine), `{{c4}}` (high — happy to defend), `{{c5}}` (table-pounding). The Editor uses these to decide what to cut, then strips them before render. If you can't honestly tag a claim `{{c3}}+`, you probably shouldn't be making it.
 

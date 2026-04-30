@@ -79,6 +79,7 @@ _NON_ROSTER_SLUGS = {"editor-in-chief", "data-and-charts", "scout", "recruiter",
 
 EIC_DISPLAY = {"name": "Margaux Devlin", "role": "Editor-in-Chief"}
 DC_DISPLAY  = {"name": "Tomás Reyes",    "role": "Data & Charts"}
+RT_DISPLAY  = {"name": "Saoirse Mok",    "role": "Devil's Advocate"}
 
 
 def get_roster() -> list[dict[str, str]]:
@@ -800,6 +801,24 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             if len(rebuttal_lines) > 1
             else "_All analysts agree -- no rebuttals._\n",
         )
+
+        # Cross-analyst differentiation check. Two sections covering the
+        # same beat with the same evidence is the failure mode -- voices
+        # blur into one. Compute pairwise lexical overlap and surface
+        # high-overlap pairs to the editor so the edit stage can either
+        # compress one section or push them onto distinct axes.
+        overlap_pairs = _compute_section_overlap(sections_by_slug)
+        if overlap_pairs:
+            lines = ["# Differentiation flag\n"]
+            for a, b, score in overlap_pairs:
+                lines.append(
+                    f"- {sections_by_slug[a]['author']} vs "
+                    f"{sections_by_slug[b]['author']}: "
+                    f"{score:.0%} content overlap"
+                )
+            _write(wd / "differentiation.md", "\n".join(lines) + "\n")
+        else:
+            _write(wd / "differentiation.md", "")
         return _next_stage(stage, report.mode)
 
     if stage == ReportStage.redteam:
@@ -865,6 +884,12 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         from api.agents.coverage import gaps as _coverage_gaps
         coverage_gaps_list = _coverage_gaps(brief, _read(wd / "coverage.md"))
 
+        # Differentiation flag: pairs of sections that overlap > 40% on
+        # content trigrams. The editor compresses one or pushes them onto
+        # distinct axes so two analysts aren't writing the same paragraph
+        # in different voices.
+        differentiation_md = _read(wd / "differentiation.md").strip() or None
+
         result = eic.edit(
             brief=brief, sections=sections,
             chart_summary=chart_summary,
@@ -872,6 +897,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             rebuttals=rebuttals or None,
             source_diversity=source_diversity,
             coverage_gaps=coverage_gaps_list or None,
+            differentiation=differentiation_md,
         )
         _write(wd / "edited.md", result.text)
         _record(report.id, wd, result)
@@ -899,10 +925,44 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         return _next_stage(stage, report.mode)
 
     if stage == ReportStage.audit:
-        # Ground every numerical claim in the edited prose against the
-        # tool-output ledger. Best-effort: a failure just means the unaudited
-        # prose flows through to render unchanged.
+        # Two passes here:
+        # 1. Strip failure markers leaked from earlier stages (timeouts,
+        #    halted iters, tool errors). A reader should never see
+        #    "[agent halted: max iterations reached]" or "the upstream
+        #    data pull failed" in the rendered PDF -- that's a pipeline
+        #    bug surfacing as prose. Stripping is a hard gate; we also
+        #    flag on report.error so the dashboard shows it.
+        # 2. Ground every numerical claim against the tool-output ledger.
         edited = _read(wd / "edited.md")
+        # Also clean the data-section.md, which bypasses the edit stage and
+        # can carry chart-agent failure markers straight to render.
+        data_section = _read(wd / "data-section.md")
+        cleaned, failures = _scrub_failure_markers(edited)
+        cleaned_data, data_failures = _scrub_failure_markers(data_section)
+        all_failures = failures + data_failures
+        if all_failures:
+            log.warning(
+                "audit: stripped %d failure marker(s) from prose for report %s",
+                len(all_failures), report.id,
+            )
+            with Session(engine) as session:
+                r = session.get(Report, report.id)
+                if r:
+                    note = (
+                        "Audit stage stripped pipeline failure markers from "
+                        "the prose before render: "
+                        + "; ".join(all_failures[:5])
+                        + (" …" if len(all_failures) > 5 else "")
+                    )
+                    r.error = (r.error + "\n\n" + note) if r.error else note
+                    session.add(r)
+                    session.commit()
+            if cleaned != edited:
+                _write(wd / "edited.md", cleaned)
+                edited = cleaned
+            if cleaned_data != data_section:
+                _write(wd / "data-section.md", cleaned_data)
+
         ledger = _read(wd / "tool-outputs.jsonl")
         if not edited.strip() or not ledger.strip():
             return _next_stage(stage, report.mode)
@@ -953,6 +1013,24 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             *[Contributor(c["name"], c["role"]) for c in _resolved_contributors(report, brief)],
             Contributor(DC_DISPLAY["name"], DC_DISPLAY["role"]),
         ]
+        # Roster invariant: if Saoirse contributed (the BEAR CASE block is
+        # non-empty, or redteam.md has substantive prose), she earns the
+        # byline. The edited prose names her ("Saoirse's strongest
+        # objection"); a reader hitting that name shouldn't have to wonder
+        # who she is.
+        bear_text = (parsed.get("bear_case") or "").strip()
+        redteam_text = _read(wd / "redteam.md").strip()
+        rt_substantive = (
+            bool(bear_text)
+            or (
+                bool(redteam_text)
+                and not redteam_text.lower().startswith("_red-team pass failed")
+            )
+        )
+        if rt_substantive:
+            contributors_credits.append(
+                Contributor(RT_DISPLAY["name"], RT_DISPLAY["role"]),
+            )
         # Reload report to pick up subtitle written during the brief stage.
         with Session(engine) as session:
             r = session.get(Report, report.id)
@@ -1209,6 +1287,128 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         return _next_stage(stage, report.mode)
 
     return ReportStage.done
+
+
+# ---------- failure-marker scrubber ----------
+
+# Patterns that indicate a pipeline failure leaking into prose. These come
+# from our own placeholders (research/draft/rebuttal timeouts and exceptions),
+# from analyst self-narration ("the upstream data pull failed", "the comps
+# retry is in the next cycle"), and from agent-loop halts ("max iterations
+# reached"). The audit stage strips them so a reader never sees pipeline
+# plumbing in the rendered PDF.
+_FAILURE_LINE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # Bracketed placeholders we generate ourselves.
+    re.compile(r"\[(?:research|draft|rebuttal|call)[^\]]*?(?:failed|timed out|halted)[^\]]*\]", re.I),
+    re.compile(r"\[agent[^\]]*?(?:halted|max iterations)[^\]]*\]", re.I),
+    re.compile(r"\[red-?team[^\]]*?failed[^\]]*\]", re.I),
+    # Italicised "_red-team pass failed: ..._" form from redteam.py.
+    re.compile(r"_(?:red-?team|audit|coverage|charts?)[^_\n]*?failed[^_\n]*_", re.I),
+)
+# Sentence-level admissions that also need stripping -- whole sentence goes.
+_FAILURE_SENTENCE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"[^.!?\n]*\b(?:upstream\s+(?:data|tool)\s+(?:pull|call)\s+failed|tool\s+(?:call|output)\s+failed)\b[^.!?\n]*[.!?]?", re.I),
+    re.compile(r"[^.!?\n]*\bretry(?:\s+is)?\s+(?:in\s+the\s+)?next\s+cycle\b[^.!?\n]*[.!?]?", re.I),
+    re.compile(r"[^.!?\n]*\bmax\s+iterations\s+reached\b[^.!?\n]*[.!?]?", re.I),
+    re.compile(r"[^.!?\n]*\bagent\s+halted\b[^.!?\n]*[.!?]?", re.I),
+)
+
+
+def _scrub_failure_markers(text: str) -> tuple[str, list[str]]:
+    """Strip pipeline failure markers from prose. Returns (cleaned, found).
+
+    `found` is a list of the matched fragments (truncated) for surfacing on
+    the report row so the operator can see what was suppressed."""
+    if not text or not text.strip():
+        return text, []
+    found: list[str] = []
+    out = text
+    for rx in _FAILURE_LINE_PATTERNS:
+        for m in rx.finditer(out):
+            snippet = m.group(0).strip()
+            if snippet:
+                found.append(snippet[:120])
+        out = rx.sub("", out)
+    for rx in _FAILURE_SENTENCE_PATTERNS:
+        for m in rx.finditer(out):
+            snippet = m.group(0).strip()
+            if snippet:
+                found.append(snippet[:120])
+        out = rx.sub("", out)
+    # Collapse blank lines created by sentence/paragraph removal so the
+    # rendered prose doesn't show gaping holes.
+    out = re.sub(r"\n[ \t]*\n[ \t]*\n+", "\n\n", out)
+    # If a section body collapses to whitespace after scrubbing, tag it so
+    # the editor / renderer sees a clear gap rather than an empty paragraph
+    # that reads as prose-by-omission.
+    out = re.sub(
+        r"(\n## [^\n]+\n+)(\s*)(?=\n## |\n# |\Z)",
+        lambda m: m.group(1) + "_(section omitted: data unavailable)_\n\n",
+        out,
+    )
+    return out, found
+
+
+# ---------- differentiation check ----------
+
+# Lexical claim-overlap threshold. Above this, two sections are doing the
+# same job: same evidence, same direction, same vocabulary. The editor
+# should either compress one or kick them onto distinct epistemological
+# axes. 0.40 picked from inspecting cases the user flagged: legitimately
+# differentiated sections land 0.15-0.30; the duplicated cases land >0.45.
+_OVERLAP_THRESHOLD = 0.40
+
+_STOP_WORDS = frozenset((
+    "the a an and or but if then so of to in on at by for with from as is "
+    "are was were be been being have has had do does did this that these "
+    "those it its their there here we us our you your they them he she his "
+    "her not no yes can could should would will may might one two three "
+    "into about after before over under up down out off through which what "
+    "who whom whose when where why how also more most less least very just "
+    "than other another any some all such only each per while because"
+).split())
+
+_TOKEN_RE = re.compile(r"[a-zA-Z][a-zA-Z'-]+")
+
+
+def _content_shingles(text: str) -> set[tuple[str, str, str]]:
+    """Word trigrams over content tokens (stopwords stripped, lowered).
+
+    Trigrams over content words are a cheap proxy for shared claims --
+    "filings show capex pacing" overlaps with "show capex pacing slowing"
+    on the trigram (show, capex, pacing) regardless of surrounding text.
+    More robust than bag-of-words (a single shared word doesn't trip
+    the threshold) and cheaper than embedding-based similarity."""
+    tokens = [
+        t.lower() for t in _TOKEN_RE.findall(text)
+        if t.lower() not in _STOP_WORDS and len(t) > 2
+    ]
+    return {(tokens[i], tokens[i + 1], tokens[i + 2]) for i in range(len(tokens) - 2)}
+
+
+def _compute_section_overlap(
+    sections_by_slug: dict[str, dict[str, str]],
+) -> list[tuple[str, str, float]]:
+    """Pairwise content-trigram overlap (Jaccard). Returns pairs above
+    _OVERLAP_THRESHOLD only, sorted by overlap descending."""
+    shingles = {slug: _content_shingles(s["body"]) for slug, s in sections_by_slug.items()}
+    out: list[tuple[str, str, float]] = []
+    slugs = sorted(sections_by_slug.keys())
+    for i, a in enumerate(slugs):
+        sa = shingles[a]
+        if not sa:
+            continue
+        for b in slugs[i + 1:]:
+            sb = shingles[b]
+            if not sb:
+                continue
+            inter = len(sa & sb)
+            union = len(sa | sb)
+            jaccard = inter / union if union else 0.0
+            if jaccard >= _OVERLAP_THRESHOLD:
+                out.append((a, b, jaccard))
+    out.sort(key=lambda t: t[2], reverse=True)
+    return out
 
 
 # ---------- helpers ----------

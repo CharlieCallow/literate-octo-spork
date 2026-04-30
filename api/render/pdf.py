@@ -97,6 +97,16 @@ def render_pdf(
 
     logo = logo_path or (ASSETS_DIR / "Fortesecurities_V2-1024x476.png")
 
+    # Drop the Target column entirely when fewer than half the rows have a
+    # numeric target. An ornamental column of em-dashes reads worse than no
+    # column at all -- the reader should infer "no target" from absence,
+    # not from a row of "—".
+    pos_list = list(positions or [])
+    show_target = False
+    if pos_list:
+        with_target = sum(1 for p in pos_list if p.get("target") is not None)
+        show_target = with_target * 2 >= len(pos_list)
+
     html = env.get_template("report.html").render(
         title=title,
         subtitle=subtitle,
@@ -110,7 +120,8 @@ def render_pdf(
         disagreement_html=md.render(disagreement) if disagreement else None,
         bear_case_html=md.render(bear_case) if bear_case else None,
         glossary_html=md.render(glossary) if glossary else None,
-        positions=list(positions or []),
+        positions=pos_list,
+        positions_show_target=show_target,
         read_minutes=read_minutes,
         logo_path=logo.as_uri(),
         css_path=(STYLES_DIR / "report.css").as_uri(),
