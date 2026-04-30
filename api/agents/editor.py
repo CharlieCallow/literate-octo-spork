@@ -203,6 +203,7 @@ Be opinionated. This is the brief the team works from.
         rebuttals: list[dict[str, str]] | None = None,
         source_diversity: dict[str, object] | None = None,
         coverage_gaps: list[str] | None = None,
+        differentiation: str | None = None,
     ) -> AgentResult:
         sec_blob = "\n\n---\n\n".join(
             f"## SECTION ({s['author']} — {s.get('role','analyst')}): {s['heading']}\n\n{s['body']}"
@@ -240,6 +241,25 @@ Be opinionated. This is the brief the team works from.
                     "claims that rest only on the dominant domain. Call this out "
                     "in your editorial note if it's not actionable in this round.\n"
                 )
+        # Differentiation flag: pairwise content-trigram overlap above 40%.
+        # Two analysts writing the same claim with the same vocabulary is
+        # the failure mode -- the editor compresses or splits.
+        differentiation_blob = ""
+        if differentiation and differentiation.strip():
+            differentiation_blob = (
+                "\nDIFFERENTIATION FLAG (these analyst sections cover the "
+                "same ground in the same words):\n\n"
+                f"{differentiation}\n"
+                "For each flagged pair, do ONE of: (a) compress the weaker "
+                "section into a 2-3 sentence quote / aside inside the "
+                "stronger one and drop the standalone, (b) rewrite the "
+                "weaker section so it argues from a DIFFERENT epistemology "
+                "(filings vs. central-bank text vs. positioning vs. flows) "
+                "than the stronger one, or (c) put their disagreement on a "
+                "new axis (horizon, beneficiary, conviction calibration). "
+                "Two voices saying the same thing is the failure mode.\n"
+            )
+
         # Brief-coverage gaps: questions the brief asked that the research
         # didn't answer. The EIC should either close them in the edit or kill
         # them rather than letting orphans through.
@@ -266,7 +286,7 @@ SECTIONS:
 CHARTS:
 
 {chart_summary}
-{bear_blob}{rebuttal_blob}{diversity_blob}{coverage_blob}
+{bear_blob}{rebuttal_blob}{diversity_blob}{differentiation_blob}{coverage_blob}
 Conviction tags: analysts mark claims with `{{c1}}` to `{{c5}}` (1 = throwaway, 5 = high conviction). CULL `{{c1}}` and `{{c2}}` claims when you compress; keep `{{c3}}+`. The tags themselves are stripped before render — just use them as a signal for what to cut.
 
 Disagreement: if two analyst sections take directionally different positions on the same question, surface it in the DISAGREEMENT block — name both views, name who holds each, name the data point that would resolve it. Voice through difference is the goal; consensus is the failure mode. If everyone agrees, write "(none)" and the section is skipped. If you have CROSS-ANALYST REBUTTALS above, mine them first — that's where the disagreement is on the record. The DISAGREEMENT block must surface a DIFFERENT axis from BEAR CASE — bear case is the external counter-thesis (Saoirse), disagreement is internal-team friction. If the only disagreement on the table is "Saoirse thinks the bull case is wrong," write "(none)" — that's redteam, not desk disagreement.

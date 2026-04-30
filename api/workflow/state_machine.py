@@ -801,6 +801,24 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             if len(rebuttal_lines) > 1
             else "_All analysts agree -- no rebuttals._\n",
         )
+
+        # Cross-analyst differentiation check. Two sections covering the
+        # same beat with the same evidence is the failure mode -- voices
+        # blur into one. Compute pairwise lexical overlap and surface
+        # high-overlap pairs to the editor so the edit stage can either
+        # compress one section or push them onto distinct axes.
+        overlap_pairs = _compute_section_overlap(sections_by_slug)
+        if overlap_pairs:
+            lines = ["# Differentiation flag\n"]
+            for a, b, score in overlap_pairs:
+                lines.append(
+                    f"- {sections_by_slug[a]['author']} vs "
+                    f"{sections_by_slug[b]['author']}: "
+                    f"{score:.0%} content overlap"
+                )
+            _write(wd / "differentiation.md", "\n".join(lines) + "\n")
+        else:
+            _write(wd / "differentiation.md", "")
         return _next_stage(stage, report.mode)
 
     if stage == ReportStage.redteam:
@@ -866,6 +884,12 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         from api.agents.coverage import gaps as _coverage_gaps
         coverage_gaps_list = _coverage_gaps(brief, _read(wd / "coverage.md"))
 
+        # Differentiation flag: pairs of sections that overlap > 40% on
+        # content trigrams. The editor compresses one or pushes them onto
+        # distinct axes so two analysts aren't writing the same paragraph
+        # in different voices.
+        differentiation_md = _read(wd / "differentiation.md").strip() or None
+
         result = eic.edit(
             brief=brief, sections=sections,
             chart_summary=chart_summary,
@@ -873,6 +897,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             rebuttals=rebuttals or None,
             source_diversity=source_diversity,
             coverage_gaps=coverage_gaps_list or None,
+            differentiation=differentiation_md,
         )
         _write(wd / "edited.md", result.text)
         _record(report.id, wd, result)
@@ -1322,6 +1347,68 @@ def _scrub_failure_markers(text: str) -> tuple[str, list[str]]:
         out,
     )
     return out, found
+
+
+# ---------- differentiation check ----------
+
+# Lexical claim-overlap threshold. Above this, two sections are doing the
+# same job: same evidence, same direction, same vocabulary. The editor
+# should either compress one or kick them onto distinct epistemological
+# axes. 0.40 picked from inspecting cases the user flagged: legitimately
+# differentiated sections land 0.15-0.30; the duplicated cases land >0.45.
+_OVERLAP_THRESHOLD = 0.40
+
+_STOP_WORDS = frozenset((
+    "the a an and or but if then so of to in on at by for with from as is "
+    "are was were be been being have has had do does did this that these "
+    "those it its their there here we us our you your they them he she his "
+    "her not no yes can could should would will may might one two three "
+    "into about after before over under up down out off through which what "
+    "who whom whose when where why how also more most less least very just "
+    "than other another any some all such only each per while because"
+).split())
+
+_TOKEN_RE = re.compile(r"[a-zA-Z][a-zA-Z'-]+")
+
+
+def _content_shingles(text: str) -> set[tuple[str, str, str]]:
+    """Word trigrams over content tokens (stopwords stripped, lowered).
+
+    Trigrams over content words are a cheap proxy for shared claims --
+    "filings show capex pacing" overlaps with "show capex pacing slowing"
+    on the trigram (show, capex, pacing) regardless of surrounding text.
+    More robust than bag-of-words (a single shared word doesn't trip
+    the threshold) and cheaper than embedding-based similarity."""
+    tokens = [
+        t.lower() for t in _TOKEN_RE.findall(text)
+        if t.lower() not in _STOP_WORDS and len(t) > 2
+    ]
+    return {(tokens[i], tokens[i + 1], tokens[i + 2]) for i in range(len(tokens) - 2)}
+
+
+def _compute_section_overlap(
+    sections_by_slug: dict[str, dict[str, str]],
+) -> list[tuple[str, str, float]]:
+    """Pairwise content-trigram overlap (Jaccard). Returns pairs above
+    _OVERLAP_THRESHOLD only, sorted by overlap descending."""
+    shingles = {slug: _content_shingles(s["body"]) for slug, s in sections_by_slug.items()}
+    out: list[tuple[str, str, float]] = []
+    slugs = sorted(sections_by_slug.keys())
+    for i, a in enumerate(slugs):
+        sa = shingles[a]
+        if not sa:
+            continue
+        for b in slugs[i + 1:]:
+            sb = shingles[b]
+            if not sb:
+                continue
+            inter = len(sa & sb)
+            union = len(sa | sb)
+            jaccard = inter / union if union else 0.0
+            if jaccard >= _OVERLAP_THRESHOLD:
+                out.append((a, b, jaccard))
+    out.sort(key=lambda t: t[2], reverse=True)
+    return out
 
 
 # ---------- helpers ----------
