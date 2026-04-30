@@ -77,6 +77,8 @@ Skip pure observations ("CPI is 3.2%"), pure framing ("the Fed is data-dependent
 
 RECONCILIATION RULE (this is the failure mode we keep hitting): if the body's nearest verdict on the asset is a HOLD ("tactical hold", "neutral", "wait", "no position", "stand aside"), DROP the row. A "hold" is not a directional call. Likewise if the body says "downgrade to hold" or "no longer long", drop -- the cover position table cannot show a long on a name the body explicitly demotes.
 
+PRICE TARGETS: when a directional call is on a SINGLE-NAME equity (an individual company ticker like NVDA, CCJ, BA -- not an ETF, index, FX pair, rate, commodity or crypto), the analyst is required to name a numeric price target. Capture it in `target_level` exactly as written ("to $185", "target $140", "PT 92"). If a single-stock call has no numeric target anywhere in the surrounding prose, DROP the row -- the firm's standard is that single-stock picks come with a number, and an extracted call without one is the failure mode this rule prevents. ETFs / indices / FX / rates / commodities / crypto are exempt -- leave `target_level` null for those.
+
 CONTRIBUTOR SLUGS available (use exactly one of these as the contributor field, plus `devils-advocate` if a red-team note is provided): {slug_list}
 
 REPORT:
