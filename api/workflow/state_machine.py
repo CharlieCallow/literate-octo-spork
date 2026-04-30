@@ -985,25 +985,6 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         edited = audited or _read(wd / "edited.md")
         edited = _strip_conviction_tags(edited)
         brief = _read(wd / "brief.md")
-
-        # Stylist: a Haiku pass that may insert page-break markers in the
-        # prose to tidy the rendered layout (kill orphaned charts, prevent
-        # half-page gaps). Best-effort and structural only -- if the model
-        # rewrites anything beyond inserting break divs, we discard the
-        # output. Skipped on test mode.
-        if report.mode != ReportMode.test:
-            try:
-                from api.agents.stylist import Stylist, merge as merge_stylist
-                stylist = Stylist(cost, audit=audit)
-                st_result = stylist.polish(edited_prose=edited)
-                _record(report.id, wd, st_result)
-                polished = merge_stylist(edited, st_result.text or "")
-                if polished != edited:
-                    _write(wd / "styled.md", polished)
-                    edited = polished
-            except Exception:  # noqa: BLE001
-                log.exception("stylist pass failed (non-blocking)")
-
         parsed = parse_edited(edited)
 
         # Extract structured calls before the cover renders so they can show
@@ -1108,7 +1089,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         ]
 
         opts = report.render_options or {}
-        render_pdf(
+        render_kwargs: dict[str, object] = dict(
             out_path=out,
             title=report.theme.title() if report.theme.islower() else report.theme,
             subtitle=subtitle or parsed.get("opening", "").split("\n")[0][:120],
@@ -1127,6 +1108,45 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             hide_positions=bool(opts.get("hide_positions")),
             hide_disclosures=bool(opts.get("hide_disclosures")),
         )
+        render_pdf(**render_kwargs)  # type: ignore[arg-type]
+
+        # Stylist re-render pass: inspect the just-rendered PDF for layout
+        # issues (large bottom gaps from charts that pushed to the next page)
+        # and, if any are found, ask the Stylist to insert page-break markers
+        # in the prose. If the prose changes, re-parse + re-render. Best
+        # effort: any failure leaves the original PDF intact. Skipped on test
+        # mode (the smoke pipeline doesn't deserve the doubled render time).
+        if report.mode != ReportMode.test:
+            try:
+                from api.agents.stylist import Stylist, merge as merge_stylist
+                from api.render.layout import format_for_prompt, summarise_layout
+                pages = summarise_layout(out)
+                layout_report = format_for_prompt(pages)
+                if "no notable layout issues" not in layout_report:
+                    stylist = Stylist(cost, audit=audit)
+                    st = stylist.polish_with_layout(
+                        edited_prose=edited, layout_report=layout_report,
+                    )
+                    _record(report.id, wd, st)
+                    polished = merge_stylist(edited, st.text or "")
+                    if polished != edited:
+                        _write(wd / "styled.md", polished)
+                        parsed2 = parse_edited(polished)
+                        raw2 = _sections_for_render(parsed2, wd)
+                        cited2, _ord2 = attach_inline_citations(raw2, _read_sources(wd))
+                        render_kwargs["sections"] = cited2
+                        render_kwargs["subtitle"] = (
+                            subtitle or parsed2.get("opening", "").split("\n")[0][:120]
+                        )
+                        render_kwargs["house_view_top"] = parsed2.get("house_view_top")
+                        render_kwargs["house_view_bottom"] = parsed2.get("house_view_bottom")
+                        render_kwargs["disagreement"] = parsed2.get("disagreement") or None
+                        render_kwargs["bear_case"] = parsed2.get("bear_case") or None
+                        render_pdf(**render_kwargs)  # type: ignore[arg-type]
+                        cited_sections = cited2
+                        edited = polished
+            except Exception:  # noqa: BLE001
+                log.exception("stylist layout pass failed (non-blocking)")
         # Reading-time + claim-density. Computed off the cited section
         # bodies (markdown links count as the claim signal -- one link
         # per claim is the analyst-prompt convention). Persisted on the

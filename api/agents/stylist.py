@@ -29,23 +29,37 @@ class Stylist(Agent):
             **kwargs,  # type: ignore[arg-type]
         )
 
-    def polish(self, *, edited_prose: str) -> AgentResult:
-        prompt = f"""You are the Stylist. The prose below will be rendered to A4 PDF. Your only job is to insert {PAGE_BREAK_TAG!r} markers where a forced page break would tidy the layout.
+    def polish_with_layout(
+        self,
+        *,
+        edited_prose: str,
+        layout_report: str,
+    ) -> AgentResult:
+        """Layout-aware pass. Runs AFTER the first render: takes the
+        rendered PDF's per-page layout summary and inserts page-break
+        divs at points that will tidy the second render."""
+        prompt = f"""You are the Stylist. A draft of this report has already been rendered to A4 PDF; the layout report below lists pages with notable issues (e.g. a large blank gap at the bottom because the next block -- usually a chart -- couldn't fit and pushed to the next page).
+
+Your only job is to insert {PAGE_BREAK_TAG!r} markers in the prose so that the next render closes those gaps. A page break div placed BEFORE a paragraph forces the prose preceding it onto its own page; the paragraph after the div then starts at the top of a new page (which is fine when you're already going to push there anyway, and lets you place the break earlier so the previous page fills with text).
+
+A more useful technique here: identify the paragraph that gets pushed (the one starting the next page after a gap) and insert the break right before it -- so the gap is intentional rather than accidental. Even better, find a SHORTER preceding paragraph and start the new page from there, leaving a fuller previous page.
 
 Rules:
-- Output the prose verbatim, unchanged in wording, with at most THREE page-break divs inserted at natural boundaries (between paragraphs, never mid-paragraph, never inside a chart tag).
-- A break is warranted when:
-  * A `[chart: ...]` tag is preceded by a short paragraph that would leave a half-page gap before the chart pushes to the next page.
-  * Two consecutive top-level headings (`## ...`) sit close together and the second one would orphan at the bottom of a page.
-- A break is NOT warranted between every section. Most reports need zero or one break. If unsure, insert nothing.
+- Output the prose verbatim, unchanged in wording, with at most THREE page-break divs inserted at paragraph boundaries (never mid-paragraph, never inside a chart tag, never inside a callout block).
+- Place each break on its own line between two paragraphs.
 - Do not edit, reword, reorder, or remove any prose, chart tag, heading, or callout. Do not add commentary.
+- If the layout report says "(no notable layout issues detected)", output the prose unchanged.
 - Output ONLY the prose (with breaks inserted if any). No preamble, no explanation.
+
+LAYOUT REPORT:
+
+{layout_report}
 
 PROSE:
 
 {edited_prose}
 """
-        return self.run(prompt, max_tokens=8192, max_iters=1)
+        return self.run(prompt, max_tokens=16384, max_iters=1)
 
 
 def merge(original: str, stylist_output: str) -> str:
