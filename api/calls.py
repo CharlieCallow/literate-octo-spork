@@ -323,7 +323,7 @@ def basket_vs_benchmark(
     *,
     side: str = "all",            # all | long | short
     min_conviction: int = 1,      # 1..5
-    benchmark: str = "^GSPC",
+    benchmark: str = "SPY",
 ) -> dict[str, Any]:
     """Compute a rolling equal-weighted basket return curve and a benchmark
     curve over the same window.
@@ -378,16 +378,25 @@ def basket_vs_benchmark(
     else:
         period = "5y"
 
-    # Fetch price history per unique asset + the benchmark.
-    tickers = {c.asset for c in calls} | {benchmark}
+    # Fetch price history per unique asset + the benchmark (with fallbacks
+    # for index tickers like ^GSPC that yfinance occasionally 404s on).
+    bench_candidates = [benchmark]
+    for fb in ("SPY", "^GSPC"):
+        if fb not in bench_candidates:
+            bench_candidates.append(fb)
+
+    tickers = {c.asset for c in calls} | set(bench_candidates)
     closes: dict[str, pd.Series] = {}
+    fetch_errors: dict[str, str] = {}
     for t in tickers:
         try:
             df = yf_data.get_history(t, period=period, interval="1d")
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             log.exception("history fetch failed for %s", t)
+            fetch_errors[t] = type(exc).__name__
             continue
         if df.empty or "Close" not in df.columns:
+            fetch_errors.setdefault(t, "empty")
             continue
         s = df["Close"].dropna()
         if not isinstance(s.index, pd.DatetimeIndex):
@@ -395,13 +404,16 @@ def basket_vs_benchmark(
         s.index = s.index.tz_localize(None).normalize()
         closes[t] = s[~s.index.duplicated(keep="last")]
 
-    if benchmark not in closes:
+    bench_used = next((t for t in bench_candidates if t in closes), None)
+    if bench_used is None:
+        tried = ", ".join(f"{t} ({fetch_errors.get(t, 'missing')})" for t in bench_candidates)
         return {
             "dates": [], "basket": [], "benchmark": [],
             "n_positions": len(calls), "basket_return": None, "benchmark_return": None,
             "benchmark_ticker": benchmark, "side": side, "min_conviction": min_conviction,
-            "error": f"benchmark {benchmark} unavailable",
+            "error": f"benchmark unavailable from yfinance: tried {tried}",
         }
+    benchmark = bench_used
 
     earliest_naive = pd.Timestamp(earliest).tz_convert(None).normalize() \
         if pd.Timestamp(earliest).tzinfo else pd.Timestamp(earliest).normalize()

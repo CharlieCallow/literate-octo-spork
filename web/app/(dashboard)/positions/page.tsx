@@ -6,9 +6,9 @@ import { api, type BasketSeries, type BasketSide, type PositionRow } from "@/lib
 type Tab = "open" | "closed";
 
 const BENCHMARKS: { ticker: string; label: string }[] = [
-  { ticker: "^GSPC", label: "SPX" },
-  { ticker: "^NDX", label: "NDX" },
-  { ticker: "^RUT", label: "RUT" },
+  { ticker: "SPY", label: "SPX" },
+  { ticker: "QQQ", label: "NDX" },
+  { ticker: "IWM", label: "RUT" },
   { ticker: "ACWI", label: "ACWI" },
 ];
 
@@ -20,7 +20,7 @@ export default function PositionsPage() {
 
   const [side, setSide] = useState<BasketSide>("all");
   const [minConviction, setMinConviction] = useState<number>(1);
-  const [benchmark, setBenchmark] = useState<string>("^GSPC");
+  const [benchmark, setBenchmark] = useState<string>("SPY");
   const [basket, setBasket] = useState<BasketSeries | null>(null);
   const [basketLoading, setBasketLoading] = useState(false);
 

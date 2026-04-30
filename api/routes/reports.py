@@ -1369,7 +1369,7 @@ class BasketSeries(BaseModel):
 def basket_vs_benchmark(
     side: str = "all",
     min_conviction: int = 1,
-    benchmark: str = "^GSPC",
+    benchmark: str = "SPY",
 ) -> BasketSeries:
     """Rolling equal-weighted basket return vs benchmark over the same window.
     Filters: side (all|long|short), min_conviction (1-5)."""
