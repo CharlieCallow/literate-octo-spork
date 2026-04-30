@@ -45,8 +45,13 @@ def init_db() -> None:
 
     # Persona persistence: seed from FS the first time, then hydrate FS from
     # DB so promotions / firings / manual edits survive Railway rebuilds.
-    from api.personas import hydrate_filesystem, seed_from_filesystem
+    from api.personas import (
+        ensure_standing_from_filesystem,
+        hydrate_filesystem,
+        seed_from_filesystem,
+    )
     seed_from_filesystem()
+    ensure_standing_from_filesystem()
     hydrate_filesystem()
 
     # Reports' PDFs still live on the ephemeral filesystem (R2 storage is the
