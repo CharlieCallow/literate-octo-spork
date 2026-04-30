@@ -80,6 +80,13 @@ class Report(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
     state: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+    # Per-report render toggles. Free-form dict so we can grow it without
+    # a migration each time. Recognised keys (all default False):
+    #   hide_bylines        -- drop the per-section "By X" line and the
+    #                          contributors block on the cover page
+    #   hide_positions      -- skip the cover page's positions table
+    #   hide_disclosures    -- omit the disclosures appendix
+    render_options: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
     # Public share link. Null = not shared. The token is a URL-safe random
     # string; the shared_at timestamp tracks when the link was minted (for UI
     # only -- it's not used for expiry).

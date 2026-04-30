@@ -42,6 +42,7 @@ export interface Report {
   // theme matching.
   mentioned_tickers?: string[];
   mentioned_themes?: string[];
+  render_options?: RenderOptions;
 }
 
 export interface PositionRow {
@@ -117,12 +118,19 @@ export interface Recommendation {
   resolved_at: string | null;
 }
 
+export interface RenderOptions {
+  hide_bylines?: boolean;
+  hide_positions?: boolean;
+  hide_disclosures?: boolean;
+}
+
 export interface CreateReportPayload {
   theme: string;
   subtitle?: string;
   mode?: ReportMode;
   team_override?: string[];
   budget_cap_usd?: number | null;
+  render_options?: RenderOptions;
 }
 
 const API_BASE =

@@ -4,7 +4,7 @@
   <p class="subtitle">{{ subtitle }}</p>
   <div class="rule"></div>
 
-  {% if positions %}
+  {% if positions and not hide_positions %}
   <div class="positions">
     <div class="positions-label">What we'd own / short / fade</div>
     <table>
@@ -27,11 +27,13 @@
   <div class="spacer"></div>
 
   <div class="meta">
+    {% if contributors %}
     <div class="contributors">
       {% for c in contributors %}
         <div><strong>{{ c.name }}</strong> &middot; {{ c.role }}</div>
       {% endfor %}
     </div>
+    {% endif %}
     <div>{{ date }} &middot; Read time ~{{ read_minutes }} min &middot; Confidential</div>
   </div>
 </section>

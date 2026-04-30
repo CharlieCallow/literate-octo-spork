@@ -1010,6 +1010,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             for c in report_calls
         ]
 
+        opts = report.render_options or {}
         render_pdf(
             out_path=out,
             title=report.theme.title() if report.theme.islower() else report.theme,
@@ -1025,6 +1026,9 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             positions=positions_table or None,
             read_minutes=8,
             sources=ordered_sources,
+            hide_bylines=bool(opts.get("hide_bylines")),
+            hide_positions=bool(opts.get("hide_positions")),
+            hide_disclosures=bool(opts.get("hide_disclosures")),
         )
         # Reading-time + claim-density. Computed off the cited section
         # bodies (markdown links count as the claim signal -- one link
