@@ -8,14 +8,14 @@
   <div class="positions">
     <div class="positions-label">What we'd own / short / fade</div>
     <table>
-      <thead><tr><th>Asset</th><th>View</th><th>Horizon</th><th>Target</th><th>Conviction</th></tr></thead>
+      <thead><tr><th>Asset</th><th>View</th><th>Horizon</th>{% if positions_show_target %}<th>Target</th>{% endif %}<th>Conviction</th></tr></thead>
       <tbody>
       {% for p in positions %}
         <tr>
           <td><strong>{{ p.asset }}</strong></td>
           <td class="dir-{{ p.direction }}">{{ p.direction }}</td>
           <td>{{ p.horizon_days }}d</td>
-          <td>{% if p.target %}{{ "%.2f"|format(p.target) }}{% else %}—{% endif %}</td>
+          {% if positions_show_target %}<td>{% if p.target %}{{ "%.2f"|format(p.target) }}{% else %}—{% endif %}</td>{% endif %}
           <td>{{ "★" * p.conviction }}</td>
         </tr>
       {% endfor %}

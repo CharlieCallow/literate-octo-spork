@@ -79,6 +79,7 @@ _NON_ROSTER_SLUGS = {"editor-in-chief", "data-and-charts", "scout", "recruiter",
 
 EIC_DISPLAY = {"name": "Margaux Devlin", "role": "Editor-in-Chief"}
 DC_DISPLAY  = {"name": "Tomás Reyes",    "role": "Data & Charts"}
+RT_DISPLAY  = {"name": "Saoirse Mok",    "role": "Devil's Advocate"}
 
 
 def get_roster() -> list[dict[str, str]]:
@@ -899,10 +900,44 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         return _next_stage(stage, report.mode)
 
     if stage == ReportStage.audit:
-        # Ground every numerical claim in the edited prose against the
-        # tool-output ledger. Best-effort: a failure just means the unaudited
-        # prose flows through to render unchanged.
+        # Two passes here:
+        # 1. Strip failure markers leaked from earlier stages (timeouts,
+        #    halted iters, tool errors). A reader should never see
+        #    "[agent halted: max iterations reached]" or "the upstream
+        #    data pull failed" in the rendered PDF -- that's a pipeline
+        #    bug surfacing as prose. Stripping is a hard gate; we also
+        #    flag on report.error so the dashboard shows it.
+        # 2. Ground every numerical claim against the tool-output ledger.
         edited = _read(wd / "edited.md")
+        # Also clean the data-section.md, which bypasses the edit stage and
+        # can carry chart-agent failure markers straight to render.
+        data_section = _read(wd / "data-section.md")
+        cleaned, failures = _scrub_failure_markers(edited)
+        cleaned_data, data_failures = _scrub_failure_markers(data_section)
+        all_failures = failures + data_failures
+        if all_failures:
+            log.warning(
+                "audit: stripped %d failure marker(s) from prose for report %s",
+                len(all_failures), report.id,
+            )
+            with Session(engine) as session:
+                r = session.get(Report, report.id)
+                if r:
+                    note = (
+                        "Audit stage stripped pipeline failure markers from "
+                        "the prose before render: "
+                        + "; ".join(all_failures[:5])
+                        + (" …" if len(all_failures) > 5 else "")
+                    )
+                    r.error = (r.error + "\n\n" + note) if r.error else note
+                    session.add(r)
+                    session.commit()
+            if cleaned != edited:
+                _write(wd / "edited.md", cleaned)
+                edited = cleaned
+            if cleaned_data != data_section:
+                _write(wd / "data-section.md", cleaned_data)
+
         ledger = _read(wd / "tool-outputs.jsonl")
         if not edited.strip() or not ledger.strip():
             return _next_stage(stage, report.mode)
@@ -953,6 +988,24 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             *[Contributor(c["name"], c["role"]) for c in _resolved_contributors(report, brief)],
             Contributor(DC_DISPLAY["name"], DC_DISPLAY["role"]),
         ]
+        # Roster invariant: if Saoirse contributed (the BEAR CASE block is
+        # non-empty, or redteam.md has substantive prose), she earns the
+        # byline. The edited prose names her ("Saoirse's strongest
+        # objection"); a reader hitting that name shouldn't have to wonder
+        # who she is.
+        bear_text = (parsed.get("bear_case") or "").strip()
+        redteam_text = _read(wd / "redteam.md").strip()
+        rt_substantive = (
+            bool(bear_text)
+            or (
+                bool(redteam_text)
+                and not redteam_text.lower().startswith("_red-team pass failed")
+            )
+        )
+        if rt_substantive:
+            contributors_credits.append(
+                Contributor(RT_DISPLAY["name"], RT_DISPLAY["role"]),
+            )
         # Reload report to pick up subtitle written during the brief stage.
         with Session(engine) as session:
             r = session.get(Report, report.id)
@@ -1209,6 +1262,66 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         return _next_stage(stage, report.mode)
 
     return ReportStage.done
+
+
+# ---------- failure-marker scrubber ----------
+
+# Patterns that indicate a pipeline failure leaking into prose. These come
+# from our own placeholders (research/draft/rebuttal timeouts and exceptions),
+# from analyst self-narration ("the upstream data pull failed", "the comps
+# retry is in the next cycle"), and from agent-loop halts ("max iterations
+# reached"). The audit stage strips them so a reader never sees pipeline
+# plumbing in the rendered PDF.
+_FAILURE_LINE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # Bracketed placeholders we generate ourselves.
+    re.compile(r"\[(?:research|draft|rebuttal|call)[^\]]*?(?:failed|timed out|halted)[^\]]*\]", re.I),
+    re.compile(r"\[agent[^\]]*?(?:halted|max iterations)[^\]]*\]", re.I),
+    re.compile(r"\[red-?team[^\]]*?failed[^\]]*\]", re.I),
+    # Italicised "_red-team pass failed: ..._" form from redteam.py.
+    re.compile(r"_(?:red-?team|audit|coverage|charts?)[^_\n]*?failed[^_\n]*_", re.I),
+)
+# Sentence-level admissions that also need stripping -- whole sentence goes.
+_FAILURE_SENTENCE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"[^.!?\n]*\b(?:upstream\s+(?:data|tool)\s+(?:pull|call)\s+failed|tool\s+(?:call|output)\s+failed)\b[^.!?\n]*[.!?]?", re.I),
+    re.compile(r"[^.!?\n]*\bretry(?:\s+is)?\s+(?:in\s+the\s+)?next\s+cycle\b[^.!?\n]*[.!?]?", re.I),
+    re.compile(r"[^.!?\n]*\bmax\s+iterations\s+reached\b[^.!?\n]*[.!?]?", re.I),
+    re.compile(r"[^.!?\n]*\bagent\s+halted\b[^.!?\n]*[.!?]?", re.I),
+)
+
+
+def _scrub_failure_markers(text: str) -> tuple[str, list[str]]:
+    """Strip pipeline failure markers from prose. Returns (cleaned, found).
+
+    `found` is a list of the matched fragments (truncated) for surfacing on
+    the report row so the operator can see what was suppressed."""
+    if not text or not text.strip():
+        return text, []
+    found: list[str] = []
+    out = text
+    for rx in _FAILURE_LINE_PATTERNS:
+        for m in rx.finditer(out):
+            snippet = m.group(0).strip()
+            if snippet:
+                found.append(snippet[:120])
+        out = rx.sub("", out)
+    for rx in _FAILURE_SENTENCE_PATTERNS:
+        for m in rx.finditer(out):
+            snippet = m.group(0).strip()
+            if snippet:
+                found.append(snippet[:120])
+        out = rx.sub("", out)
+    # Collapse blank lines created by sentence/paragraph removal so the
+    # rendered prose doesn't show gaping holes.
+    out = re.sub(r"\n[ \t]*\n[ \t]*\n+", "\n\n", out)
+    # If a section body collapses to whitespace after scrubbing, tag it so
+    # the editor / renderer sees a clear gap rather than an empty paragraph
+    # that reads as prose-by-omission.
+    out = re.sub(
+        r"(\n## [^\n]+\n+)(\s*)(?=\n## |\n# |\Z)",
+        lambda m: m.group(1) + "_(section omitted: data unavailable)_\n\n",
+        out,
+    )
+    return out, found
 
 
 # ---------- helpers ----------

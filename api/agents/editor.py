@@ -269,9 +269,11 @@ CHARTS:
 {bear_blob}{rebuttal_blob}{diversity_blob}{coverage_blob}
 Conviction tags: analysts mark claims with `{{c1}}` to `{{c5}}` (1 = throwaway, 5 = high conviction). CULL `{{c1}}` and `{{c2}}` claims when you compress; keep `{{c3}}+`. The tags themselves are stripped before render — just use them as a signal for what to cut.
 
-Disagreement: if two analyst sections take directionally different positions on the same question, surface it in the DISAGREEMENT block — name both views, name who holds each, name the data point that would resolve it. Voice through difference is the goal; consensus is the failure mode. If everyone agrees, write "(none)" and the section is skipped. If you have CROSS-ANALYST REBUTTALS above, mine them first — that's where the disagreement is on the record.
+Disagreement: if two analyst sections take directionally different positions on the same question, surface it in the DISAGREEMENT block — name both views, name who holds each, name the data point that would resolve it. Voice through difference is the goal; consensus is the failure mode. If everyone agrees, write "(none)" and the section is skipped. If you have CROSS-ANALYST REBUTTALS above, mine them first — that's where the disagreement is on the record. The DISAGREEMENT block must surface a DIFFERENT axis from BEAR CASE — bear case is the external counter-thesis (Saoirse), disagreement is internal-team friction. If the only disagreement on the table is "Saoirse thinks the bull case is wrong," write "(none)" — that's redteam, not desk disagreement.
 
 Bear integration: take the strongest objection from Saoirse's note and put it in the BEAR CASE block — one paragraph in your voice, framed as "where we'd be wrong." Don't refute it — name it.
+
+Closing discipline: BEAR CASE is the thesis-level objection (where the call is wrong). The CLOSING pre-mortem is the FALSIFICATION TRIGGER (the dated, observable event that proves the call wrong). Do NOT restate BEAR CASE in CLOSING. If you find yourself writing the same idea in both, the pre-mortem is failing — rewrite it as a specific calendar-anchored trigger (a print, a filing, a vote, a level breach) rather than a thesis recap.
 
 Return JSON-ish markdown in EXACTLY this structure (use the literal headings — they're parsed):
 
