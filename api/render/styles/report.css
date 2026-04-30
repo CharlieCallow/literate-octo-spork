@@ -59,16 +59,20 @@ body { padding: 0 18mm; }
   overflow: hidden;
   padding: 20mm 0 16mm;
 }
-.cover .logo { width: 64mm; max-width: 100%; }
+.cover .logo { width: 56mm; max-width: 100%; }
 .cover h1 {
-  margin: 50mm 0 0;
-  font-size: 30pt;
-  line-height: 1.1;
+  margin: 22mm 0 0;
+  font-size: 28pt;
+  line-height: 1.12;
   color: var(--forte-navy);
   font-weight: 700;
   word-wrap: break-word;
   overflow-wrap: break-word;
+  hyphens: none;
 }
+/* Long titles (>60 chars) shrink rather than truncate. */
+.cover h1.long  { font-size: 24pt; }
+.cover h1.xlong { font-size: 20pt; line-height: 1.18; }
 .cover .subtitle {
   font-size: 13pt;
   color: var(--forte-muted);
@@ -111,6 +115,11 @@ body { padding: 0 18mm; }
 .cover .positions td.dir-short { color: #B8860B; font-weight: 600; }
 .cover .positions td.dir-fade  { color: #B8860B; font-weight: 600; }
 .cover .positions td.dir-avoid { color: var(--forte-muted); font-weight: 600; }
+.cover .cover-house-view {
+  margin-top: 10mm;
+  font-size: 11pt;
+  line-height: 1.4;
+}
 .cover .meta {
   font-size: 10pt;
   color: var(--forte-muted);
@@ -207,7 +216,11 @@ table.kv tr:nth-child(even) td { background: transparent; }
 .glossary { page-break-before: always; }
 .glossary h2 { margin-top: 0; }
 
-.disclosures { font-size: 9pt; color: var(--forte-muted); page-break-before: avoid; }
+.disclosures {
+  font-size: 9pt;
+  color: var(--forte-muted);
+  page-break-before: always;  /* Disclosures are the final page. */
+}
 .disclosures h2 { color: var(--forte-muted); border-top-color: var(--forte-rule); }
 
 .sources {
