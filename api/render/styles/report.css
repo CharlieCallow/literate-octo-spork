@@ -22,6 +22,14 @@
 }
 
 @page { size: A4; }
+/* No header/footer on the cover. Chromium honours per-page margin overrides
+   even with display_header_footer=true: a zero top/bottom margin leaves no
+   room for the header/footer templates, so they don't render on page 1.
+   The cover compensates with its own padding to keep visual breathing room. */
+@page :first { margin-top: 0; margin-bottom: 0; }
+
+/* Forced page break marker the Stylist agent can drop into prose. */
+.page-break { page-break-after: always; height: 0; }
 
 * { box-sizing: border-box; }
 
@@ -43,8 +51,13 @@ body { padding: 0 18mm; }
   background: var(--forte-paper);
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
-  padding: 8mm 0;
+  /* A4 is 297mm tall. The cover gets a zeroed page margin (see @page :first),
+     so we own the full page and clamp height to it -- everything must fit on
+     one page; overflow is hidden rather than spilling onto a second page. */
+  height: 297mm;
+  max-height: 297mm;
+  overflow: hidden;
+  padding: 20mm 0 16mm;
 }
 .cover .logo { width: 64mm; max-width: 100%; }
 .cover h1 {
@@ -188,7 +201,13 @@ table.kv tr:nth-child(even) td { background: transparent; }
 }
 .callout--house .label, .callout--house strong { color: var(--forte-teal); }
 
-.disclosures { font-size: 9pt; color: var(--forte-muted); }
+/* Glossary starts on a fresh page. Disclosures intentionally do NOT force a
+   page break -- they tuck onto the tail of the glossary page if there's
+   room, otherwise they flow to the next page naturally. */
+.glossary { page-break-before: always; }
+.glossary h2 { margin-top: 0; }
+
+.disclosures { font-size: 9pt; color: var(--forte-muted); page-break-before: avoid; }
 .disclosures h2 { color: var(--forte-muted); border-top-color: var(--forte-rule); }
 
 .sources {
