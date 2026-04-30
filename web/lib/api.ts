@@ -63,6 +63,21 @@ export interface PositionRow {
   outcome: "hit" | "miss" | "partial" | null;
 }
 
+export type BasketSide = "all" | "long" | "short";
+
+export interface BasketSeries {
+  dates: string[];
+  basket: number[];
+  benchmark: number[];
+  n_positions: number;
+  basket_return: number | null;
+  benchmark_return: number | null;
+  benchmark_ticker: string;
+  side: BasketSide;
+  min_conviction: number;
+  error?: string | null;
+}
+
 export interface AskResponse {
   reply: string;
   cost_usd: number;
@@ -436,6 +451,14 @@ export const api = {
   // Position tracker
   listOpenPositions: () => req<PositionRow[]>("/reports/positions/open"),
   listClosedPositions: () => req<PositionRow[]>("/reports/positions/closed"),
+  getBasket: (params: { side?: BasketSide; min_conviction?: number; benchmark?: string }) => {
+    const q = new URLSearchParams();
+    if (params.side) q.set("side", params.side);
+    if (params.min_conviction) q.set("min_conviction", String(params.min_conviction));
+    if (params.benchmark) q.set("benchmark", params.benchmark);
+    const qs = q.toString() ? `?${q}` : "";
+    return req<BasketSeries>(`/reports/positions/basket${qs}`);
+  },
 
   pdfUrl: (id: number) => `${API_BASE}/reports/${id}/pdf`,
   chartJsonUrl: (reportId: number, filename: string) =>
