@@ -24,12 +24,15 @@ def get_history(
     if cached is not None:
         df = pd.DataFrame(cached["rows"])
         if not df.empty:
-            df.index = pd.to_datetime(cached["index"])
+            df.index = pd.to_datetime(cached["index"], utc=True)
         return df
 
     df = yf.Ticker(ticker).history(period=period, interval=interval, auto_adjust=True)
     if df.empty:
         return df
+
+    # Normalize to UTC so cached ISO strings round-trip cleanly across DST.
+    df.index = pd.to_datetime(df.index, utc=True)
 
     payload = {
         "index": [d.isoformat() for d in df.index.to_pydatetime()],
