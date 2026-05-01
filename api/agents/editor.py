@@ -157,13 +157,15 @@ DATA SOURCES THE TEAM CAN PULL FROM:
 - Wikipedia -- definitional and background content.
 - Web search -- current news, headlines, broker notes.
 
+Title-and-subtitle discipline: report TITLES are at most 6 words. The detailed thesis goes in the SUBTITLE, which can be longer. Bad: "Optical interconnect just became the new I/O wall. Copper maxed out at 200G/lane, optics are now the moat." Good: title "The CPO Trade" / subtitle "Why the substrate, not the transceiver, captures the interconnect transition." If the incoming THEME above is already a 20-word sentence, your SUBTITLE inherits the long thesis -- the cover layer caps the title mechanically -- but you should still write a SUBTITLE that stands on its own as the long-form framing.
+
 Output the brief in markdown using EXACTLY these literal section headings (they're parsed by the workflow):
 
 # ANGLE
 <one sentence — what this report is actually arguing>
 
 # SUBTITLE
-<one sentence — short, descriptive, goes on the cover page under the title>
+<one sentence — the detailed thesis. Can be longer than the title. Goes on the cover under the (max-6-word) title.>
 
 # QUESTIONS
 1. <question 1>
@@ -318,16 +320,20 @@ CHARTS:
 {bear_blob}{rebuttal_blob}{diversity_blob}{differentiation_blob}{degraded_blob}{coverage_blob}
 Conviction tags: analysts mark claims with `{{c1}}` to `{{c5}}` (1 = throwaway, 5 = high conviction). CULL `{{c1}}` and `{{c2}}` claims when you compress; keep `{{c3}}+`. The tags themselves are stripped before render — just use them as a signal for what to cut.
 
-Disagreement: if two analyst sections take directionally different positions on the same question, surface it in the DISAGREEMENT block — name both views, name who holds each, name the data point that would resolve it. Voice through difference is the goal; consensus is the failure mode. If everyone agrees, write "(none)" and the section is skipped. If you have CROSS-ANALYST REBUTTALS above, mine them first — that's where the disagreement is on the record. The DISAGREEMENT block must surface a DIFFERENT axis from BEAR CASE — bear case is the external counter-thesis (Saoirse), disagreement is internal-team friction. If the only disagreement on the table is "Saoirse thinks the bull case is wrong," write "(none)" — that's redteam, not desk disagreement.
+Closing structure: the report has exactly THREE closing blocks. Nothing else. No "Pre-Mortem", no "Where We'd Be Wrong" callout, no "When We'll Know We're Wrong" callout, no editor's note in the body (post-mortem editorial notes belong in housekeeping, not the rendered PDF). The three blocks are:
 
-Bear integration: take the strongest objection from Saoirse's note and put it in the BEAR CASE block. Two sentences only. Sentence one: where we'd be wrong (the thesis-level objection in your voice). Sentence two MUST start with "When we'll know we're wrong:" and name a specific calendar-anchored falsification trigger (a print, a filing, a vote, a level breach by date). Both halves live HERE. Do not restate either in CLOSING.
+(1) WHAT TO WATCH -- lives in CLOSING. Two to three concrete signals with dates: a print (CPI, payrolls), a filing window (10-Q by date), a vote, a level breach by a named horizon. Each bullet must name the signal AND the date AND what it would imply. This block also absorbs the dated falsification trigger that used to be "when we'll know we're wrong": one of the watch items IS the falsifier. Specific only -- no thesis recap, no generic "we'll be watching the data".
+
+(2) WHERE THE DESK DISAGREES -- lives in DISAGREEMENT. ONE substantive analyst split, named, with a specific resolution document. Format: name both views in the third person ("the desk splits: one read holds X, the other Y"), and name the document or print that resolves it ("the next FOMC SEP", "Nvidia's October 10-Q", "the IEA Q4 Oil Market Report"). If two analyst sections genuinely disagree, mine the CROSS-ANALYST REBUTTALS above and surface that. If the only friction on the table is Saoirse's external bear vs. the bull thesis, fold THAT into this block instead -- the "where we'd be wrong" angle now lives here, framed as a desk split. If neither an analyst-vs-analyst split nor a usable Saoirse objection exists, write exactly "(none)".
+
+(3) BOTTOM LINE -- lives in HOUSE VIEW (BOTTOM). One sentence. The takeaway.
+
+Deprecated block: BEAR CASE. Always output exactly "(none)" for it. Its two halves have moved: the thesis-level objection ("where we'd be wrong") folds into DISAGREEMENT framed as a desk split; the dated falsification trigger ("when we'll know we're wrong") folds into CLOSING as one of the watch items.
 
 House rules (non-negotiable):
 - NO em dashes anywhere in the prose. Use commas, hyphens, or full stops. The render layer will scrub any that slip through, but you should not write them in the first place.
 - The report is the firm's external voice -- it does NOT reference the analysts by name as if they're talking to each other. Cut every "Marcus is right to push on it", "as Saoirse notes", "to Tomás's point", "Eli would push back". Bylines on each section already credit the author; the body never says one analyst's name in another's voice. If two sections genuinely disagree, surface it in the DISAGREEMENT block in the third person ("the desk is split: one view holds X, the other Y") -- never with a name.
 - NO narration of pipeline failures, missing sections, or unanswered brief questions. The published report does not acknowledge what wasn't researched. Specifically prohibited phrases (and any close paraphrase): "we did not answer", "the section that should have", "shipping the gap visible", "the brief asked X things, we answered Y". Post-mortem editorial notes belong in the housekeeping stage's feedback artifact, not in the rendered PDF.
-
-Closing discipline: CLOSING is "what to watch" only -- the 1-2 indicators that, if they move, change the trade. It is NOT a pre-mortem, NOT a falsification trigger, NOT a recap of the bear case. If you find yourself writing "when we'll know we're wrong" in CLOSING, you have failed -- that line lives in BEAR CASE. The reviewer's previous critique flagged five end-of-report sections doing variations of "here's what could break the thesis" and we are collapsing them: BEAR CASE owns the objection AND the falsifier, CLOSING owns the watchlist, nothing else.
 
 Return JSON-ish markdown in EXACTLY this structure (use the literal headings — they're parsed):
 
@@ -346,16 +352,16 @@ Return JSON-ish markdown in EXACTLY this structure (use the literal headings —
 <edited body. Keep their voice. Cut hedge-words. Demand evidence stays. ~200-400 words each.>>
 
 # DISAGREEMENT
-<If two sections disagree directionally, one short paragraph naming both views, who holds them, and what would resolve it. Otherwise write exactly: (none)>
+<"Where the desk disagrees." ONE substantive analyst split in the third person, with a NAMED resolution document (a specific filing, print, or report by date that would settle it). May fold a Saoirse-vs-bull "where we'd be wrong" framing into a desk split if no analyst-vs-analyst split exists. Otherwise write exactly: (none)>
 
 # BEAR CASE
-<Two sentences. Sentence 1: where we'd be wrong (the thesis-level objection, your voice, integrating Saoirse). Sentence 2: must start with the literal phrase "When we'll know we're wrong:" and name a specific dated falsification trigger. If there's no bear note, write exactly: (none)>
+<Deprecated. Always write exactly: (none)>
 
 # HOUSE VIEW (BOTTOM)
-<one short sentence — the bottom-line takeaway, navy callout at the end of the report.>
+<"Bottom line." One sentence. The takeaway.>
 
 # CLOSING
-<One short paragraph. The 1-2 indicators we are watching that, if they move, change the trade. Specific (a print, a filing window, a level). Watchlist only -- no pre-mortem, no falsification language, no thesis recap; that lives in BEAR CASE.>
+<"What to watch." Two to three concrete signals, each with a date: a print, a filing window, a vote, a level breach by a named horizon. One of them IS the dated falsification trigger (what would tell us the thesis is wrong, with a date). No pre-mortem, no thesis recap, no editorial note.>
 """
         # 8192 (Sonnet/Haiku ceiling) instead of 4096. With 4-6 contributors
         # the output is OPENING + HOUSE VIEW (TOP) + REVISED SECTIONS x N
