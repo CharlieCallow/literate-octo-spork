@@ -25,6 +25,7 @@ class ReportStage(str, Enum):
     rebuttal = "rebuttal"  # each analyst's reaction to peer drafts -- seeds DISAGREEMENT
     redteam = "redteam"  # bear / devil's-advocate pass on the drafts
     edit = "edit"
+    position_audit = "position_audit"  # reconcile cover position table to body recommendations
     audit = "audit"      # ground every number in the edited prose against tool outputs
     render = "render"
     feedback = "feedback"
