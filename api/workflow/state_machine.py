@@ -66,6 +66,7 @@ STAGE_ORDER: list[ReportStage] = [
     ReportStage.edit,
     ReportStage.position_audit,
     ReportStage.audit,
+    ReportStage.reconcile,
     ReportStage.render,
     ReportStage.feedback,
     ReportStage.housekeeping,
@@ -350,6 +351,7 @@ TEST_MODE_SKIP_STAGES: frozenset[ReportStage] = frozenset({
     ReportStage.redteam,       # no devil's advocate pass
     ReportStage.position_audit, # no call extraction on smoke runs anyway
     ReportStage.audit,         # no post-edit numerical audit
+    ReportStage.reconcile,     # no holistic final pass
     ReportStage.feedback,      # no persona-feedback writes
     ReportStage.housekeeping,  # no house view / tagger / threader / voice stats
 })
@@ -1225,11 +1227,15 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             _ = e
         return _next_stage(stage, report.mode)
 
+    if stage == ReportStage.reconcile:
+        return _run_reconcile(report, wd, cost, audit)
+
     if stage == ReportStage.render:
-        # Prefer audited prose if the audit stage produced one. Strip the
+        # Prefer reconciled prose, then audited, then edited. Strip the
         # analyst's conviction tags ({c1}..{c5}) before parsing so they don't
         # appear in the rendered PDF.
-        audited = _read(wd / "audited.md").strip()
+        reconciled = _read(wd / "reconciled.md").strip()
+        audited = reconciled or _read(wd / "audited.md").strip()
         edited = audited or _read(wd / "edited.md")
         edited = _strip_conviction_tags(edited)
         edited = _strip_em_dashes(edited)
@@ -2320,6 +2326,186 @@ def _run_position_audit(
         lines.append("_No candidate positions extracted from the edited prose._")
     _write(wd / "position-audit.md", "\n".join(lines) + "\n")
     return _next_stage(ReportStage.position_audit, report.mode)
+
+
+# ---------- reconciliation pass ----------
+
+
+def _run_reconcile(
+    report: Report,
+    wd: Path,
+    cost: CostTracker,
+    audit,  # type: ignore[no-untyped-def]
+) -> ReportStage:
+    """Holistic final pass over the assembled draft.
+
+    One LLM call, strong model, full draft in context. Fixes cross-section
+    consistency (trade direction vs PT, missing cover rows, conviction
+    alignment, conflicting dates), strips process artifacts (working notes,
+    orphan masthead personas, internal HR metadata in roles), and tidies
+    reference hygiene (first-mention names, glossary dedupe, redundant
+    openings).
+
+    Failures here are non-blocking. If the call fails or produces output
+    we can't peel the trailers off, render falls back to the audited
+    prose. Better to ship a slightly inconsistent report than no report.
+    """
+    from api import calls as calls_mod
+    from api.agents.reconciler import Reconciler, split_output
+    from api.models import Call
+
+    assert report.id is not None
+
+    # Prefer audited prose; fall back to edited if audit was a no-op.
+    audited = _read(wd / "audited.md").strip()
+    draft = audited or _read(wd / "edited.md")
+    if not draft.strip():
+        log.info("reconcile: no draft to reconcile for report %s -- skipping", report.id)
+        _write(wd / "reconciled.md", "")
+        return _next_stage(ReportStage.reconcile, report.mode)
+
+    brief = _read(wd / "brief.md")
+    contributors = _resolved_contributors(report, brief)
+    redteam_text = _read(wd / "redteam.md").strip()
+    if redteam_text.lower().startswith("_red-team pass failed"):
+        redteam_text = ""
+
+    # Pull the current cover position table the position_audit stage
+    # persisted. The reconciler may add rows (tickers with named PTs in the
+    # body that didn't make the table) or drop rows whose direction the
+    # body contradicts.
+    current_calls: list[dict[str, object]] = []
+    with Session(engine) as session:
+        rows = session.exec(
+            select(Call).where(Call.report_id == report.id)
+        ).all()
+        for row in rows:
+            current_calls.append({
+                "asset": row.asset,
+                "direction": row.direction.value,
+                "horizon_days": row.horizon_days,
+                "conviction": row.conviction,
+                "target_level": row.target_level,
+                "contributor_slug": row.contributor_slug,
+                "claim_text": row.claim_text or "",
+            })
+
+    try:
+        reconciler = Reconciler(cost, audit=audit)
+        result = reconciler.reconcile(
+            draft=draft,
+            contributors=contributors,
+            position_table=current_calls,
+            redteam_prose=redteam_text or None,
+        )
+        _record(report.id, wd, result)
+    except Exception:  # noqa: BLE001
+        log.exception("reconcile: LLM call failed (non-blocking)")
+        _write(wd / "reconciled.md", "")
+        _write(wd / "reconciliation-log.md", "_reconciler call failed; render falls back to audited prose._\n")
+        return _next_stage(ReportStage.reconcile, report.mode)
+
+    if result.stop_reason == "max_tokens":
+        log.warning(
+            "reconcile: hit max_tokens for report %s -- output likely truncated",
+            report.id,
+        )
+
+    reconciled_draft, position_rows, change_log = split_output(result.text)
+
+    # Sanity gate: a reconciler that stripped every structural heading is
+    # broken. Keep the audited prose in that case.
+    if not _has_required_headings(reconciled_draft):
+        log.warning(
+            "reconcile: output missing required headings for report %s -- discarding",
+            report.id,
+        )
+        _write(wd / "reconciled.md", "")
+        _write(
+            wd / "reconciliation-log.md",
+            "_reconciler output missing required headings; render falls back to audited prose._\n\n"
+            + (change_log or ""),
+        )
+        return _next_stage(ReportStage.reconcile, report.mode)
+
+    _write(wd / "reconciled.md", reconciled_draft)
+
+    # Persist the reconciled position table. The reconciler is the last
+    # word on the cover -- if it returns rows, they replace what
+    # position_audit produced. An empty array is treated as a deliberate
+    # "drop everything" only if the original was also empty; otherwise
+    # we leave the existing calls in place (an empty trailer block more
+    # often means the model forgot than that it meant to clear the cover).
+    table_changes: list[str] = []
+    if position_rows:
+        slug_set = {c["slug"] for c in contributors} | {"devils-advocate"}
+        clean = [r for r in position_rows if r["contributor_slug"] in slug_set]
+        # Compute diff for the change log surfaced to the dashboard.
+        before_keys = {(c["asset"], c["direction"]) for c in current_calls}
+        after_keys = {(r["asset"], r["direction"]) for r in clean}
+        for k in sorted(after_keys - before_keys):
+            table_changes.append(f"+ {k[0]} ({k[1]}) -- added by reconciler")
+        for k in sorted(before_keys - after_keys):
+            table_changes.append(f"- {k[0]} ({k[1]}) -- dropped by reconciler")
+        if before_keys != after_keys or current_calls:
+            with Session(engine) as session:
+                existing = session.exec(
+                    select(Call).where(Call.report_id == report.id)
+                ).all()
+                for row in existing:
+                    session.delete(row)
+                session.commit()
+            calls_mod.persist(report.id, clean)  # type: ignore[arg-type]
+
+    # Write the change log alongside the prose. Append a short note to
+    # report.error so the dashboard surfaces "reconciler made N fixes".
+    log_lines = ["# Reconciliation change log\n"]
+    if change_log:
+        log_lines.append(change_log)
+    else:
+        log_lines.append("(none reported by reconciler)")
+    if table_changes:
+        log_lines.append("\n## Cover position table\n")
+        log_lines.extend(table_changes)
+    _write(wd / "reconciliation-log.md", "\n".join(log_lines) + "\n")
+
+    # Surface a one-line summary to the dashboard so a human reviewer
+    # knows the reconciler ran and roughly how active it was. Each fix
+    # is logged in reconciliation-log.md for spot-checking.
+    n_bullets = sum(1 for ln in change_log.splitlines() if ln.lstrip().startswith("- "))
+    if n_bullets > 0 or table_changes:
+        with Session(engine) as session:
+            r = session.get(Report, report.id)
+            if r:
+                note = (
+                    f"Reconciler made {n_bullets} prose fix(es) and "
+                    f"{len(table_changes)} cover-table change(s). "
+                    "See reconciliation-log.md for the per-fix rationale."
+                )
+                r.error = (r.error + "\n\n" + note) if r.error else note
+                session.add(r)
+                session.commit()
+
+    audit("reconcile_done", {
+        "n_prose_fixes": n_bullets,
+        "n_table_changes": len(table_changes),
+        "stop_reason": result.stop_reason,
+    })
+    return _next_stage(ReportStage.reconcile, report.mode)
+
+
+_REQUIRED_RECONCILE_HEADINGS = (
+    "# OPENING",
+    "# REVISED SECTIONS",
+    "# CLOSING",
+)
+
+
+def _has_required_headings(text: str) -> bool:
+    """Sanity check: the reconciler must preserve the structural headings
+    the renderer parses. If any of these are missing, the output is
+    unsafe to feed into parse_edited()."""
+    return all(h in text for h in _REQUIRED_RECONCILE_HEADINGS)
 
 
 # ---------- failure-marker scrubber ----------
