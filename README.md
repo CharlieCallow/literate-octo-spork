@@ -97,6 +97,23 @@ Each report runs through stages:
 
 PDF lands embedded in the dashboard and on disk at `reports/<id>/report.pdf`.
 
+## Edit + re-render an existing report
+
+Each finished report writes an editable `reports/<id>/draft.md` alongside
+the PDF. Open it in any text editor, fix the typo / star count / sentence,
+and re-render — no LLM calls, no chart regeneration:
+
+```bash
+make render REPORT=reports/42
+# or:
+python -m scripts.render_report reports/42
+```
+
+`draft.md` is the single source of truth: YAML frontmatter for cover
+metadata (title, contributors, positions, sources, hide flags) and a
+markdown body for prose. Charts are referenced by filename
+(`[chart: rates.png]`) and resolved against `reports/<id>/charts/`.
+
 ## Daily Scout digest
 
 Scout (the morning-scan agent) can run automatically every day. Toggle via `.env`:

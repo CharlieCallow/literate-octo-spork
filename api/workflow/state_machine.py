@@ -23,6 +23,7 @@ from api.agents.recruiter import Recruiter
 from api.agents.redteam import RedTeam
 from api.db import engine
 from api.models import AuditLog, Report, ReportMode, ReportStage
+from api.render.draft import Draft, dump_draft
 from api.render.pdf import Contributor, Section, render_pdf
 from api.settings import settings
 from api.workflow.audit import audit_hook
@@ -1476,6 +1477,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             hide_disclosures=bool(opts.get("hide_disclosures")),
         )
         render_pdf(**render_kwargs)  # type: ignore[arg-type]
+        _dump_draft_artifact(wd, render_kwargs)
 
         # Stylist re-render pass: inspect the just-rendered PDF for layout
         # issues (large bottom gaps from charts that pushed to the next page)
@@ -1511,6 +1513,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
                         render_kwargs["disagreement"] = parsed2.get("disagreement") or None
                         render_kwargs["bear_case"] = parsed2.get("bear_case") or None
                         render_pdf(**render_kwargs)  # type: ignore[arg-type]
+                        _dump_draft_artifact(wd, render_kwargs)
                         cited_sections = cited2
                         edited = polished
             except Exception:  # noqa: BLE001
@@ -2869,6 +2872,38 @@ def _sections_for_render(parsed: dict[str, object], wd: Path) -> list[Section]:
             body_md=_inline_charts(str(closing), wd, used=used_charts),
         ))
     return out
+
+
+def _dump_draft_artifact(wd: Path, render_kwargs: dict[str, object]) -> None:
+    """Persist `<wd>/draft.md` as the human-editable source of truth for the
+    just-rendered PDF. Idempotent; safe to call after every render_pdf. Best
+    effort -- failures are logged but do not block the render stage."""
+    try:
+        sections = render_kwargs.get("sections") or []
+        contributors = render_kwargs.get("contributors") or []
+        positions = render_kwargs.get("positions") or []
+        sources = render_kwargs.get("sources") or []
+        draft = Draft(
+            title=str(render_kwargs.get("title") or ""),
+            subtitle=str(render_kwargs.get("subtitle") or ""),
+            date=str(render_kwargs.get("date") or ""),
+            contributors=list(contributors),  # type: ignore[arg-type]
+            sections=list(sections),  # type: ignore[arg-type]
+            house_view_top=render_kwargs.get("house_view_top") or None,  # type: ignore[arg-type]
+            house_view_bottom=render_kwargs.get("house_view_bottom") or None,  # type: ignore[arg-type]
+            disagreement=render_kwargs.get("disagreement") or None,  # type: ignore[arg-type]
+            bear_case=render_kwargs.get("bear_case") or None,  # type: ignore[arg-type]
+            glossary=render_kwargs.get("glossary") or None,  # type: ignore[arg-type]
+            positions=list(positions),  # type: ignore[arg-type]
+            sources=list(sources),  # type: ignore[arg-type]
+            read_minutes=int(render_kwargs.get("read_minutes") or 8),  # type: ignore[arg-type]
+            hide_bylines=bool(render_kwargs.get("hide_bylines")),
+            hide_positions=bool(render_kwargs.get("hide_positions")),
+            hide_disclosures=bool(render_kwargs.get("hide_disclosures")),
+        )
+        dump_draft(draft, wd)
+    except Exception:  # noqa: BLE001
+        log.exception("draft.md dump failed (non-blocking)")
 
 
 _CHART_TAG_RE = re.compile(r"\[chart:\s*(.+?)\s*\]")
