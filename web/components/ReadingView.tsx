@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReadingMode } from "@/lib/api";
 
 /* Web-styled report reader. The server returns sections pre-rendered to HTML
@@ -15,10 +15,30 @@ export function ReadingView({
 }) {
   const [data, setData] = useState<ReadingMode | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const articleRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     loader().then(setData).catch((e) => setError(String(e)));
   }, [loader]);
+
+  // Pull `**TERM** — definition` pairs out of the rendered glossary HTML so we
+  // can hang them on inline tooltips in the body. Glossary lives in its own
+  // section at the end of the read, so this also applies to every old report
+  // already in storage -- nothing about the report itself needs to change.
+  const glossaryTerms = useMemo(() => extractGlossaryTerms(data?.glossary_html ?? null), [data?.glossary_html]);
+
+  useEffect(() => {
+    if (!data || glossaryTerms.length === 0) return;
+    const root = articleRef.current;
+    if (!root) return;
+    const bodies = root.querySelectorAll<HTMLElement>(
+      ".reading-section:not(.reading-glossary) .reading-body",
+    );
+    bodies.forEach((body) => {
+      // First occurrence per section only — quieter than peppering every hit.
+      glossaryTerms.forEach(({ term, def }) => wrapFirstMatch(body, term, def));
+    });
+  }, [data, glossaryTerms]);
 
   if (error) {
     return <p className="muted" style={{ color: "#B8860B" }}>{error}</p>;
@@ -31,7 +51,7 @@ export function ReadingView({
   }
 
   return (
-    <article className="reading">
+    <article className="reading" ref={articleRef}>
       <header className="reading-cover">
         <div className="byline" style={{ color: "var(--forte-teal)" }}>Forte Research</div>
         <h1>{data.theme}</h1>
@@ -93,4 +113,90 @@ export function ReadingView({
       )}
     </article>
   );
+}
+
+interface GlossaryTerm {
+  term: string;
+  def: string;
+}
+
+function extractGlossaryTerms(glossaryHtml: string | null): GlossaryTerm[] {
+  if (!glossaryHtml || typeof window === "undefined") return [];
+  const doc = new DOMParser().parseFromString(glossaryHtml, "text/html");
+  const out: GlossaryTerm[] = [];
+  doc.querySelectorAll("strong").forEach((strong) => {
+    const term = (strong.textContent ?? "").trim();
+    const parent = strong.parentElement;
+    if (!term || !parent) return;
+    let def = "";
+    let after = false;
+    parent.childNodes.forEach((node) => {
+      if (after) def += node.textContent ?? "";
+      if (node === strong) after = true;
+    });
+    def = def.replace(/^\s*[—–-]\s*/, "").trim();
+    // The line may contain extra trailing prose from the next entry if the
+    // glossary renders as one paragraph with <br>s. Cut at the first <br>'s
+    // text-equivalent (newline) just in case.
+    def = def.split("\n")[0].trim();
+    if (term && def) out.push({ term, def });
+  });
+  // Longer phrases first so "operator margin" wins over "margin".
+  out.sort((a, b) => b.term.length - a.term.length);
+  return out;
+}
+
+const SKIP_TAGS = new Set([
+  "A", "ABBR", "CODE", "PRE", "H1", "H2", "H3", "H4", "H5", "H6",
+  "FIGCAPTION", "TH", "SUP", "SCRIPT", "STYLE",
+]);
+
+function wrapFirstMatch(root: HTMLElement, term: string, def: string): void {
+  // Acronyms / proper nouns: case-sensitive. Lowercase phrases: case-insensitive.
+  const caseSensitive = /[A-Z]/.test(term);
+  const flags = caseSensitive ? "" : "i";
+  const pattern = new RegExp(`\\b${escapeRegex(term)}\\b`, flags);
+
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      let p: Node | null = node.parentNode;
+      while (p && p !== root) {
+        if (p.nodeType === 1 && SKIP_TAGS.has((p as Element).tagName)) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        p = p.parentNode;
+      }
+      return pattern.test(node.nodeValue ?? "")
+        ? NodeFilter.FILTER_ACCEPT
+        : NodeFilter.FILTER_REJECT;
+    },
+  });
+
+  const node = walker.nextNode() as Text | null;
+  if (!node) return;
+  const text = node.nodeValue ?? "";
+  const match = pattern.exec(text);
+  if (!match) return;
+  const start = match.index;
+  const end = start + match[0].length;
+
+  const before = text.slice(0, start);
+  const matched = text.slice(start, end);
+  const after = text.slice(end);
+
+  const abbr = document.createElement("abbr");
+  abbr.className = "annex-term";
+  abbr.title = def;
+  abbr.textContent = matched;
+
+  const parent = node.parentNode;
+  if (!parent) return;
+  if (before) parent.insertBefore(document.createTextNode(before), node);
+  parent.insertBefore(abbr, node);
+  if (after) parent.insertBefore(document.createTextNode(after), node);
+  parent.removeChild(node);
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

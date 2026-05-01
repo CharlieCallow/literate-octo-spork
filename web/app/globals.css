@@ -112,6 +112,12 @@ sup.cite a:hover { text-decoration: underline; }
   border-left: 3px solid var(--forte-teal);
   color: var(--forte-purple); font-style: italic;
 }
+.reading-body abbr.annex-term {
+  text-decoration: underline dotted var(--forte-teal);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  cursor: help;
+}
 .reading-house {
   background: var(--forte-navy);
   color: #FFF;
