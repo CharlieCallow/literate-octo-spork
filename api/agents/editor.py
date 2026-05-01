@@ -261,13 +261,10 @@ Be opinionated. This is the brief the team works from.
                 "Two voices saying the same thing is the failure mode.\n"
             )
 
-        # Degraded-section directive: if a contributor's section file was
-        # missing or a recovery stub at edit time, fold their structural
-        # points (from the brief's CONTRIBUTORS line) into a neighbouring
-        # section's prose. Do NOT render their section heading with an
-        # "Editor's note: ... section pulled" paragraph -- the audit gate
-        # downstream drops anything that looks like that, so a header without
-        # a fold-in just disappears with the reader knowing nothing of why.
+        # Missing-section directive: if a contributor's section file is
+        # absent at edit time, the EIC ships what was researched without
+        # narrating the gap. The audit stage blocks incomplete reports;
+        # the EIC's job is not to acknowledge the absence in prose.
         degraded_blob = ""
         if degraded_sections:
             lines = "\n".join(
@@ -275,30 +272,35 @@ Be opinionated. This is the brief the team works from.
                 for d in degraded_sections
             )
             degraded_blob = (
-                "\nDEGRADED SECTIONS (these analysts' drafts failed at "
-                "research/draft time and there is NO body to revise):\n\n"
+                "\nMISSING SECTIONS (no body exists for these slugs):\n\n"
                 f"{lines}\n\n"
-                "DO NOT output a `## ...` block for these slugs. Instead, "
-                "absorb the structural points each one would have made (per "
-                "their brief assignment above) into the most adjacent "
-                "surviving analyst section's prose, in that analyst's voice. "
-                "One paragraph max per fold-in. Do NOT mention the failure, "
-                "do NOT write 'editor's note', do NOT leave a placeholder "
-                "heading. The reader should never know a section was pulled.\n"
+                "If a section is missing from the draft, the EIC does not "
+                "acknowledge its absence in the published report. The audit "
+                "stage is responsible for blocking incomplete reports. The "
+                "EIC's job is to ship what was researched, not to narrate "
+                "what wasn't. Do NOT output a `## ...` block for these slugs, "
+                "do NOT write an editor's note, do NOT leave a placeholder "
+                "heading, do NOT fold a 'this section was pulled' aside into "
+                "a neighbouring section.\n"
             )
 
         # Brief-coverage gaps: questions the brief asked that the research
-        # didn't answer. The EIC should either close them in the edit or kill
-        # them rather than letting orphans through.
+        # didn't answer. The EIC strikes them from the premise; it does not
+        # narrate the unanswered question in the body.
         coverage_blob = ""
         if coverage_gaps:
             bullets = "\n".join(f"- {q}" for q in coverage_gaps)
             coverage_blob = (
                 "\nUNANSWERED BRIEF QUESTIONS (research didn't return on these):\n\n"
                 f"{bullets}\n\n"
-                "For each: either fold an explicit closing line into the relevant "
-                "section, or strike it from the report's premise so the closing "
-                "doesn't promise an answer the body doesn't deliver.\n"
+                "If a section is missing from the draft, the EIC does not "
+                "acknowledge its absence in the published report. The audit "
+                "stage is responsible for blocking incomplete reports. The "
+                "EIC's job is to ship what was researched, not to narrate "
+                "what wasn't. Strike each unanswered question from the "
+                "report's premise (opening, thesis, closing) so nothing "
+                "promises an answer the body doesn't deliver. Do NOT add a "
+                "closing line that names the gap.\n"
             )
         prompt = f"""You are editing a draft Forte Research report. Your job: tighten, kill weak claims, write the opening and the bottom-line, integrate the bear case, and surface internal disagreement. PRESERVE EACH SECTION'S VOICE — homogenising into a house voice is the failure mode. The brief is below for reference, then the analyst sections, then a summary of charts, then Saoirse's bear note.
 
@@ -323,6 +325,7 @@ Bear integration: take the strongest objection from Saoirse's note and put it in
 House rules (non-negotiable):
 - NO em dashes anywhere in the prose. Use commas, hyphens, or full stops. The render layer will scrub any that slip through, but you should not write them in the first place.
 - The report is the firm's external voice -- it does NOT reference the analysts by name as if they're talking to each other. Cut every "Marcus is right to push on it", "as Saoirse notes", "to Tomás's point", "Eli would push back". Bylines on each section already credit the author; the body never says one analyst's name in another's voice. If two sections genuinely disagree, surface it in the DISAGREEMENT block in the third person ("the desk is split: one view holds X, the other Y") -- never with a name.
+- NO narration of pipeline failures, missing sections, or unanswered brief questions. The published report does not acknowledge what wasn't researched. Specifically prohibited phrases (and any close paraphrase): "we did not answer", "the section that should have", "shipping the gap visible", "the brief asked X things, we answered Y". Post-mortem editorial notes belong in the housekeeping stage's feedback artifact, not in the rendered PDF.
 
 Closing discipline: CLOSING is "what to watch" only -- the 1-2 indicators that, if they move, change the trade. It is NOT a pre-mortem, NOT a falsification trigger, NOT a recap of the bear case. If you find yourself writing "when we'll know we're wrong" in CLOSING, you have failed -- that line lives in BEAR CASE. The reviewer's previous critique flagged five end-of-report sections doing variations of "here's what could break the thesis" and we are collapsing them: BEAR CASE owns the objection AND the falsifier, CLOSING owns the watchlist, nothing else.
 
