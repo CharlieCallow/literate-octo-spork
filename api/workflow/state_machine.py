@@ -53,10 +53,15 @@ STAGE_ORDER: list[ReportStage] = [
     ReportStage.brief,
     ReportStage.recruit,
     ReportStage.research,
-    ReportStage.charts,
     ReportStage.draft,
     ReportStage.section_audit,
     ReportStage.rebuttal,
+    # Charts run AFTER drafts + rebuttals so Tomás can read each analyst's
+    # explicit horizons / price targets / trigger levels and render the
+    # load-bearing chart with the desk's actual forecast as a forward
+    # annotation. Charting upstream of drafting produced rear-view-mirror
+    # charts that stopped at the last data point.
+    ReportStage.charts,
     ReportStage.redteam,
     ReportStage.edit,
     ReportStage.position_audit,
@@ -805,8 +810,18 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
     if stage == ReportStage.charts:
         dc = DataAndCharts(cost, audit=audit, model=models["data"])
         brief = _read(wd / "brief.md")
-        all_notes = _concat_notes(wd, _resolved_contributors(report, brief))
-        result = dc.build(brief, all_notes, wd / "charts", mode=report.mode)
+        contributors = _resolved_contributors(report, brief)
+        all_notes = _concat_notes(wd, contributors)
+        # Drafts are now upstream of this stage. Feed them in so Tomás can
+        # pull each desk's specific horizons, price targets, and trigger
+        # levels into the chart annotations rather than inventing them.
+        drafts_blob = _concat_drafts(wd, contributors)
+        rebuttals_blob = _read(wd / "rebuttals.md").strip()
+        result = dc.build(
+            brief, all_notes, wd / "charts",
+            drafts=drafts_blob, rebuttals=rebuttals_blob,
+            mode=report.mode,
+        )
         _write(wd / "data-section.md", result.text)
         _record(report.id, wd, result)
         _append_tool_outputs(wd, "data-and-charts", result)
@@ -2409,6 +2424,18 @@ def _concat_notes(wd: Path, contributors: list[dict[str, str]]) -> str:
         if text.strip():
             parts.append(f"## NOTES FROM {c['name']} ({c['role']})\n\n{text}")
     return "\n\n---\n\n".join(parts) if parts else "(no analyst notes)"
+
+
+def _concat_drafts(wd: Path, contributors: list[dict[str, str]]) -> str:
+    """Stitched analyst drafts. Used by Data & Charts to lift each desk's
+    explicit horizons / price targets / trigger levels into the chart
+    annotations."""
+    parts: list[str] = []
+    for c in contributors:
+        text = _read(wd / f"section-{c['slug']}.md")
+        if text.strip():
+            parts.append(f"## DRAFT FROM {c['name']} ({c['role']})\n\n{text}")
+    return "\n\n---\n\n".join(parts) if parts else "(no analyst drafts)"
 
 
 # ---------- brief parsing ----------

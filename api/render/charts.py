@@ -84,6 +84,33 @@ def _label_last(ax: plt.Axes, series: pd.Series, color: str) -> None:
     )
 
 
+def _draw_thresholds(ax: plt.Axes, thresholds: Sequence[dict[str, Any]] | None) -> None:
+    """Horizontal trade-trigger lines with right-edge labels. Used to mark
+    levels the desk is watching ('RTX > 22x fwd', 'flip-line at 1.05x'),
+    so the chart shows what changes the call, not just where price is."""
+    if not thresholds:
+        return
+    for t in thresholds:
+        try:
+            v = float(t["value"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        label = str(t.get("label", "")).strip()
+        ax.axhline(v, color=NAVY, linewidth=1, linestyle=":", alpha=0.85)
+        if label:
+            ax.annotate(
+                label,
+                xy=(1.0, v),
+                xycoords=("axes fraction", "data"),
+                xytext=(-4, 4),
+                textcoords="offset points",
+                fontsize=9,
+                color=NAVY,
+                ha="right",
+                va="bottom",
+            )
+
+
 def _df_to_records(df: pd.DataFrame) -> dict[str, Any]:
     """Serialise a DataFrame into a JSON-friendly shape for the sidecar."""
     if df.empty:
@@ -129,6 +156,7 @@ def line_chart(
     as_of: str,
     out_path: Path,
     y_label: str | None = None,
+    thresholds: Sequence[dict[str, Any]] | None = None,
 ) -> Path:
     """One column per series. Index used as x-axis."""
     _style()
@@ -139,6 +167,7 @@ def line_chart(
         _label_last(ax, df[col], color)
     if y_label:
         ax.set_ylabel(y_label)
+    _draw_thresholds(ax, thresholds)
     if len(df.columns) > 4:
         ax.legend(loc="best")
     _layout(fig, title=title, subtitle=subtitle, source=source, as_of=as_of)
@@ -146,7 +175,8 @@ def line_chart(
     fig.savefig(out_path)
     plt.close(fig)
     _save_sidecar(out_path, "line", title=title, subtitle=subtitle,
-                  source=source, as_of=as_of, data=_df_to_records(df))
+                  source=source, as_of=as_of, data=_df_to_records(df),
+                  extras={"thresholds": [dict(t) for t in (thresholds or [])]})
     return out_path
 
 
@@ -191,6 +221,7 @@ def regime_chart(
     as_of: str,
     out_path: Path,
     shaded: Sequence[tuple[str, str]] | str = (),
+    thresholds: Sequence[dict[str, Any]] | None = None,
 ) -> Path:
     """Line chart with shaded regimes. Pass `shaded='nber'` for the bundled
     NBER recession ranges, or a sequence of (start_iso, end_iso) tuples."""
@@ -238,6 +269,7 @@ def regime_chart(
     if data_xlim is not None:
         ax.set_xlim(data_xlim)
 
+    _draw_thresholds(ax, thresholds)
     if len(df.columns) > 4:
         ax.legend(loc="best")
     _layout(fig, title=title, subtitle=subtitle, source=source, as_of=as_of)
@@ -246,7 +278,8 @@ def regime_chart(
     plt.close(fig)
     _save_sidecar(out_path, "regime", title=title, subtitle=subtitle,
                   source=source, as_of=as_of, data=_df_to_records(df),
-                  extras={"shaded": [list(rng) for rng in shaded]})
+                  extras={"shaded": [list(rng) for rng in shaded],
+                          "thresholds": [dict(t) for t in (thresholds or [])]})
     return out_path
 
 
@@ -263,6 +296,7 @@ def comparison_chart(
     as_of: str,
     out_path: Path,
     dual_axis: bool = True,
+    thresholds: Sequence[dict[str, Any]] | None = None,
 ) -> Path:
     """Compare two series with optionally distinct y-axes (useful when the
     series are on very different scales -- e.g. a yield vs an index level)."""
@@ -291,13 +325,17 @@ def comparison_chart(
         for i, col in enumerate(cols[1:], start=1):
             ax_left.plot(df.index, df[col], color=CHART_CYCLE[i % len(CHART_CYCLE)], label=col)
 
+    # Thresholds anchor to the LEFT axis -- typical use is a flip-line on a
+    # ratio/spread chart where the left series is the load-bearing one.
+    _draw_thresholds(ax_left, thresholds)
     _layout(fig, title=title, subtitle=subtitle, source=source, as_of=as_of)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path)
     plt.close(fig)
     _save_sidecar(out_path, "comparison", title=title, subtitle=subtitle,
                   source=source, as_of=as_of, data=_df_to_records(df),
-                  extras={"dual_axis": dual_axis})
+                  extras={"dual_axis": dual_axis,
+                          "thresholds": [dict(t) for t in (thresholds or [])]})
     return out_path
 
 
@@ -314,9 +352,15 @@ def event_chart(
     source: str,
     as_of: str,
     out_path: Path,
+    thresholds: Sequence[dict[str, Any]] | None = None,
 ) -> Path:
     """Line chart with vertical lines + labels at named events.
-    Each event: {'date': 'YYYY-MM-DD', 'label': 'short label'}."""
+    Each event: {'date': 'YYYY-MM-DD', 'label': 'short label'}.
+
+    Forward-dated events are supported -- the x-axis extends to include
+    them so the catalyst the desk is watching ('FY27 conf report, Aug
+    2026') sits visibly to the right of the last data point. That's the
+    whole point of the annotation: show what changes the call, when."""
     _style()
     fig, ax = plt.subplots()
     for i, col in enumerate(df.columns):
@@ -324,30 +368,43 @@ def event_chart(
         ax.plot(df.index, df[col], color=color, label=col)
         _label_last(ax, df[col], color)
 
-    # Same axis-stretch problem as regime_chart: an event placed before
-    # or after the data window would push axvline out and squash the
-    # actual series. Capture the data range, drop out-of-window events,
-    # and pin xlim to keep the chart focused.
+    # Capture data range, then EXTEND the axis to include any forward-dated
+    # event markers. Forward annotations (catalyst dates, scheduled votes)
+    # are the load-bearing case; dropping them defeats the chart.
     data_xlim: tuple[Any, Any] | None = None
     if not df.empty:
         valid_index = df.dropna(how="all").index
         if len(valid_index) > 0:
             data_xlim = (valid_index.min(), valid_index.max())
 
+    x_lo = pd.to_datetime(data_xlim[0]) if data_xlim else None
+    x_hi = pd.to_datetime(data_xlim[1]) if data_xlim else None
+
+    parsed_events: list[tuple[pd.Timestamp, str]] = []
+    for ev in events:
+        try:
+            x = pd.to_datetime(ev["date"])
+        except (KeyError, ValueError):
+            continue
+        # Drop pre-data events -- those are rear-view context the data
+        # should already cover. Forward-dated events (catalysts the desk
+        # is watching) are the load-bearing case and ARE kept; the axis
+        # extends right to include them.
+        if x_lo is not None and x < x_lo:
+            continue
+        parsed_events.append((x, ev.get("label", "")))
+
+    if parsed_events and data_xlim is not None:
+        ev_max = max(x for x, _ in parsed_events)
+        if ev_max > x_hi:  # type: ignore[operator]
+            data_xlim = (x_lo, ev_max)
+
     if len(df.columns):
         _, ymax = ax.get_ylim()
-        x_lo = pd.to_datetime(data_xlim[0]) if data_xlim else None
-        x_hi = pd.to_datetime(data_xlim[1]) if data_xlim else None
-        for ev in events:
-            try:
-                x = pd.to_datetime(ev["date"])
-            except (KeyError, ValueError):
-                continue
-            if x_lo is not None and x_hi is not None and (x < x_lo or x > x_hi):
-                continue  # event lies outside the data window -- skip
+        for x, label in parsed_events:
             ax.axvline(x, color=TEAL, linewidth=1, linestyle="--", alpha=0.7)
             ax.annotate(
-                ev.get("label", ""),
+                label,
                 xy=(x, ymax),
                 xytext=(2, -10),
                 textcoords="offset points",
@@ -357,6 +414,8 @@ def event_chart(
                 ha="left",
                 va="top",
             )
+
+    _draw_thresholds(ax, thresholds)
 
     if data_xlim is not None:
         ax.set_xlim(data_xlim)
@@ -368,7 +427,8 @@ def event_chart(
     plt.close(fig)
     _save_sidecar(out_path, "event", title=title, subtitle=subtitle,
                   source=source, as_of=as_of, data=_df_to_records(df),
-                  extras={"events": [dict(e) for e in events]})
+                  extras={"events": [dict(e) for e in events],
+                          "thresholds": [dict(t) for t in (thresholds or [])]})
     return out_path
 
 

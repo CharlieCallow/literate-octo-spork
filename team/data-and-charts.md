@@ -13,6 +13,7 @@
 - One dry one-liner per section, max.
 - Captions are a sentence; chart commentary is two sentences and a number.
 - Despises chart junk. Despises broken y-axes more.
+- Despises rear-view-mirror charts most of all. Every load-bearing chart he ships carries a forward annotation -- a labeled catalyst date, a trade-trigger threshold line, or both. The chart that stops at the last data point is the chart that admits the desk has no view.
 
 **Voice samples.**
 

@@ -330,6 +330,7 @@ def make_chart_tool(out_dir: Path) -> Tool:
         compare_with: str | None = None,
         events: list[dict[str, str]] | None = None,
         shaded: str | None = None,
+        thresholds: list[dict[str, Any]] | None = None,
         **_: Any,
     ) -> str:
         try:
@@ -354,16 +355,16 @@ def make_chart_tool(out_dir: Path) -> Tool:
 
         try:
             if chart_kind == "line":
-                chart_helpers.line_chart(df, title=title, subtitle=subtitle, source=src_label, as_of=as_of, out_path=out_path)
+                chart_helpers.line_chart(df, title=title, subtitle=subtitle, source=src_label, as_of=as_of, out_path=out_path, thresholds=thresholds)
             elif chart_kind == "bar":
                 first_col = df.columns[0]
                 chart_helpers.bar_chart(df[first_col], title=title, subtitle=subtitle, source=src_label, as_of=as_of, out_path=out_path)
             elif chart_kind == "regime":
-                chart_helpers.regime_chart(df, title=title, subtitle=subtitle, source=src_label, as_of=as_of, out_path=out_path, shaded=shaded or "nber")
+                chart_helpers.regime_chart(df, title=title, subtitle=subtitle, source=src_label, as_of=as_of, out_path=out_path, shaded=shaded or "nber", thresholds=thresholds)
             elif chart_kind == "comparison":
-                chart_helpers.comparison_chart(df, title=title, subtitle=subtitle, source=src_label, as_of=as_of, out_path=out_path)
+                chart_helpers.comparison_chart(df, title=title, subtitle=subtitle, source=src_label, as_of=as_of, out_path=out_path, thresholds=thresholds)
             elif chart_kind == "event":
-                chart_helpers.event_chart(df, events or [], title=title, subtitle=subtitle, source=src_label, as_of=as_of, out_path=out_path)
+                chart_helpers.event_chart(df, events or [], title=title, subtitle=subtitle, source=src_label, as_of=as_of, out_path=out_path, thresholds=thresholds)
             else:
                 return f"Unknown chart_kind: {chart_kind}. Use line | bar | regime | comparison | event."
         except Exception as e:  # noqa: BLE001
@@ -406,6 +407,15 @@ def make_chart_tool(out_dir: Path) -> Tool:
                     "items": {"type": "object", "properties": {"date": {"type": "string"}, "label": {"type": "string"}}, "required": ["date", "label"]},
                 },
                 "shaded": {"type": "string", "description": "For chart_kind='regime': 'nber' for the bundled NBER recession bands."},
+                "thresholds": {
+                    "type": "array",
+                    "description": (
+                        "Horizontal trade-trigger lines with right-edge labels. Use to mark the level "
+                        "that flips the call -- 'RTX > 22x fwd', 'flip-line at 1.05x SOX', '10Y > 4.50%'. "
+                        "Supported on line / regime / comparison / event kinds."
+                    ),
+                    "items": {"type": "object", "properties": {"value": {"type": "number"}, "label": {"type": "string"}}, "required": ["value", "label"]},
+                },
             },
             "required": ["chart_kind", "source", "series_or_ticker", "title", "subtitle", "filename"],
         },

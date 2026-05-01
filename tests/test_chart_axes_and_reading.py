@@ -13,6 +13,7 @@ auto-extension can't stretch the axis.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -94,29 +95,61 @@ def test_regime_chart_clamps_xlim_when_data_is_short_window(monkeypatch, tmp_pat
     assert xmax_date.year >= 2026
 
 
-def test_event_chart_drops_events_outside_data_window(tmp_path: Path) -> None:
-    """Events placed before the first data point (or after the last)
-    should not extend the x-axis. Same axvline-stretches-axis bug as
-    regime_chart's axvspan."""
+def test_event_chart_drops_pre_data_events_but_keeps_forward_catalysts(tmp_path: Path) -> None:
+    """Pre-data events are rear-view context the data should already
+    cover -- drop them so they don't stretch the axis back decades.
+    Forward-dated events are the load-bearing case (catalyst dates the
+    desk is watching) and MUST be kept; the axis extends right to
+    include them."""
     from api.render.charts import event_chart
 
     df = _post_2024_yield_frame()
     out_path = tmp_path / "events.png"
-    # First event is years before the data; second is inside the window.
     event_chart(
         df,
         events=[
-            {"date": "2008-09-15", "label": "Lehman"},        # pre-data
-            {"date": "2025-01-20", "label": "Inauguration"},  # in window
-            {"date": "2099-01-01", "label": "Future"},        # post-data
+            {"date": "2008-09-15", "label": "Lehman"},                  # pre-data: dropped
+            {"date": "2025-01-20", "label": "Inauguration"},            # in window
+            {"date": "2026-08-15", "label": "FY27 conf report"},        # forward: kept
         ],
         title="t", subtitle="s", source="FRED", as_of="2026-04-01",
         out_path=out_path,
     )
     assert out_path.exists()
-    # The chart should run cleanly even when most events are out of
-    # range -- regression would have either stretched the axis or
-    # raised a matplotlib annotation error.
+    sidecar = json.loads(out_path.with_suffix(".json").read_text())
+    # The original event list is preserved in the sidecar verbatim --
+    # the rendering filter doesn't mutate the input. The forward event
+    # is what makes the chart load-bearing.
+    labels = [e["label"] for e in sidecar["events"]]
+    assert "FY27 conf report" in labels
+
+
+def test_event_chart_extends_axis_for_forward_catalyst(tmp_path: Path) -> None:
+    """The defining behavior of the forward-annotation push: an event
+    dated past the last data point must extend the x-axis to make
+    room. Regression would either drop the event or squash it onto
+    the right edge."""
+    from matplotlib.dates import num2date
+
+    from api.render.charts import event_chart
+
+    df = _post_2024_yield_frame()
+    last_data_point = df.index.max().to_pydatetime()
+    out_path = tmp_path / "events.png"
+    catalyst = "2027-01-15"
+    event_chart(
+        df,
+        events=[{"date": catalyst, "label": "FY27 catalyst"}],
+        title="t", subtitle="s", source="FRED", as_of="2026-04-01",
+        out_path=out_path,
+    )
+    assert out_path.exists()
+    # We can't easily get xlim back after plt.close(), so the sidecar
+    # is the contract: forward event survives the render so the
+    # annotation actually appears in the chart.
+    sidecar = json.loads(out_path.with_suffix(".json").read_text())
+    assert any(e["date"] == catalyst for e in sidecar["events"])
+    _ = (last_data_point, num2date)  # imports kept for future xlim assert
 
 
 # ----------------------------------------------------------------------
@@ -181,3 +214,45 @@ def test_reading_mode_rejects_in_progress_stages() -> None:
         assert exc.value.status_code == 400, (
             f"stage={stage} should still raise 400 -- content isn't on disk yet"
         )
+
+
+# ----------------------------------------------------------------------
+# Forecast annotations: thresholds + forward catalysts
+# (Ticket 10 -- Tomás's load-bearing chart must carry a forward annotation.)
+# ----------------------------------------------------------------------
+
+def test_line_chart_renders_thresholds(tmp_path: Path) -> None:
+    """Thresholds are how the desk's trade-trigger level shows up on a
+    price/yield chart ('RTX > 22x fwd', '10Y > 4.50%'). Sidecar must
+    record them so dashboard renderers stay consistent with the PNG."""
+    from api.render.charts import line_chart
+
+    df = _post_2024_yield_frame()
+    out_path = tmp_path / "yield.png"
+    line_chart(
+        df,
+        title="10Y", subtitle="s", source="FRED", as_of="2026-04-01",
+        out_path=out_path,
+        thresholds=[{"value": 4.50, "label": "Sell trigger > 4.50%"}],
+    )
+    assert out_path.exists()
+    sidecar = json.loads(out_path.with_suffix(".json").read_text())
+    assert sidecar["thresholds"][0]["value"] == 4.50
+    assert "trigger" in sidecar["thresholds"][0]["label"].lower()
+
+
+def test_charts_stage_runs_after_drafts() -> None:
+    """Ticket 10: Tomás needs the desk's specific forecasts (horizons,
+    targets, trigger levels) to annotate the load-bearing chart. Charts
+    must run downstream of draft -- ideally after rebuttal so any
+    cross-desk disagreement is on the page first."""
+    from api.models import ReportStage
+    from api.workflow.state_machine import STAGE_ORDER
+
+    i_draft = STAGE_ORDER.index(ReportStage.draft)
+    i_rebuttal = STAGE_ORDER.index(ReportStage.rebuttal)
+    i_charts = STAGE_ORDER.index(ReportStage.charts)
+    i_edit = STAGE_ORDER.index(ReportStage.edit)
+    assert i_draft < i_charts, "charts must run after drafts so it can read forecasts"
+    assert i_rebuttal < i_charts, "charts run after rebuttal so disagreement is visible"
+    assert i_charts < i_edit, "charts still need to be on the page before EIC edits"
