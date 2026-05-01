@@ -581,6 +581,23 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         # in actual track record rather than persona vibes. Skipped on
         # test mode -- smoke runs don't extract calls anyway.
         roster = get_roster()
+        # Failure-mode memory: drop any agent with 3+ unresolved exclusions
+        # at the same audit stage. The recruiter has (or will, on next
+        # review) queued a fire/replace ticket for them; until that's
+        # actioned the EIC must not schedule them.
+        try:
+            from api import report_failures as _rf
+            blacklist = _rf.blacklisted_slugs()
+            if blacklist:
+                dropped = [c["slug"] for c in roster if c["slug"] in blacklist]
+                if dropped:
+                    log.warning(
+                        "brief: skipping recurring-failure agents %s for report %s",
+                        dropped, report.id,
+                    )
+                roster = [c for c in roster if c["slug"] not in blacklist]
+        except Exception:  # noqa: BLE001
+            log.exception("brief: blacklist lookup failed (non-blocking)")
         cal_lines: dict[str, str] = {}
         if report.mode != ReportMode.test:
             try:
@@ -1646,6 +1663,13 @@ def _run_section_audit(
             "attempt": attempt,
             "marker": marker or "(empty)",
         })
+        from api import report_failures as _rf
+        _rf.log_failure(
+            report_id=report.id,
+            stage=ReportStage.section_audit,
+            failure_type="section_audit_failure",
+            agent=slug,
+        )
 
         # Attempt 2: redraft-only, doubled max_iters against existing notes.
         if attempt < 2:
@@ -1662,6 +1686,13 @@ def _run_section_audit(
             except Exception as e:  # noqa: BLE001
                 log.exception("section_audit attempt 2 failed for %s", slug)
                 audit("section_audit_retry_failed", {"agent": slug, "error": str(e)})
+                from api import report_failures as _rf
+                _rf.log_failure(
+                    report_id=report.id,
+                    stage=ReportStage.section_audit,
+                    failure_type="section_audit_retry_failed",
+                    agent=slug,
+                )
             body = _read(section_path)
             marker = _section_failure_marker(body)
             if marker is None and body.strip():
@@ -1695,6 +1726,13 @@ def _run_section_audit(
             except Exception as e:  # noqa: BLE001
                 log.exception("section_audit attempt 3 failed for %s", slug)
                 audit("section_audit_retry_failed", {"agent": slug, "error": str(e)})
+                from api import report_failures as _rf
+                _rf.log_failure(
+                    report_id=report.id,
+                    stage=ReportStage.section_audit,
+                    failure_type="section_audit_retry_failed",
+                    agent=slug,
+                )
             body = _read(section_path)
             marker = _section_failure_marker(body)
             if marker is None and body.strip():
@@ -1707,6 +1745,13 @@ def _run_section_audit(
         _exclude_section(wd, slug, reason)
         excluded.append((slug, reason))
         audit("section_audit_excluded", {"agent": slug, "reason": reason})
+        from api import report_failures as _rf
+        _rf.log_failure(
+            report_id=report.id,
+            stage=ReportStage.section_audit,
+            failure_type=_rf.EXCLUDED,
+            agent=slug,
+        )
 
     # If nothing was excluded, we're done.
     if not excluded:

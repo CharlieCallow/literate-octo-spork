@@ -289,6 +289,32 @@ class PersonaVoiceStat(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_now, index=True)
 
 
+class ReportFailure(SQLModel, table=True):
+    """One row per audit-stage failure attributable to a contributor.
+
+    Logged by section_audit (and any other audit-stage gate that can blame an
+    agent). Powers the firm's failure-mode memory: the recruiter queues a
+    fire/replace ticket and the EIC stops scheduling an agent once three
+    unresolved exclusions accumulate at the same stage. `resolved_at` flips
+    when a recurring-failure fire recommendation is actioned (approved or
+    dismissed) so the counter resets and the EIC can route work to that
+    agent again."""
+
+    __tablename__ = "report_failures"
+
+    id: int | None = Field(default=None, primary_key=True)
+    report_id: int = Field(foreign_key="reports.id", index=True)
+    stage: ReportStage = Field(index=True)
+    # Free-form short string. Recognised values:
+    #   section_audit_failure       -- failure marker found in a freshly drafted section
+    #   section_audit_retry_failed  -- a redraft / re-research attempt blew up
+    #   section_audit_excluded      -- 3 strikes; section dropped from the report
+    failure_type: str = Field(index=True)
+    agent: str = Field(index=True)  # contributor slug; the persona that failed
+    created_at: datetime = Field(default_factory=_now, index=True)
+    resolved_at: datetime | None = Field(default=None, index=True)
+
+
 class Persona(SQLModel, table=True):
     """Source of truth for persona files. The filesystem is a write-through
     cache rehydrated from these rows at startup so Railway rebuilds don't

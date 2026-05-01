@@ -33,6 +33,7 @@ def refresh_recommendations() -> int:
         added += _propose_promotions(session)
         added += _propose_fires_for_stale(session)
         added += _propose_fires_for_underperformance(session)
+        added += _propose_fires_for_recurring_failures(session)
         session.commit()
     log.info("recruiter review added %d new recommendations", added)
     return added
@@ -122,6 +123,39 @@ def _propose_fires_for_underperformance(session: Session) -> int:
                 f"below the {UNDERPERFORM_HIT_RATE:.0%} threshold. "
                 f"Recommend firing -- archive the persona; rehire later if "
                 f"the strategy changes."
+            ),
+        ))
+        added += 1
+    return added
+
+
+def _propose_fires_for_recurring_failures(session: Session) -> int:
+    """Suggest firing analysts who've been excluded from the same audit stage
+    three or more times since their last reset. Closes the EIC's loop: by the
+    time we reach this rule, the brief stage has already stopped scheduling
+    the agent, so the fire/replace rec is the surfacing for human approval."""
+    from api import report_failures as rf
+    added = 0
+    roster_by_slug = {m["slug"]: m for m in get_roster()}
+    for slug, stage, count in rf.recurring_failures():
+        if _has_open_rec(session, slug, RecommendationKind.fire):
+            continue
+        meta = roster_by_slug.get(slug)
+        if not meta:
+            # Could be a temp specialist or already archived -- skip; the
+            # standing roster is the only place this rec is actionable.
+            continue
+        session.add(Recommendation(
+            kind=RecommendationKind.fire,
+            subject_slug=slug,
+            subject_name=meta["name"],
+            subject_role=meta["role"],
+            reasoning=(
+                f"Excluded from `{stage.value}` {count} times across reports "
+                f"with no resolution. Recommend firing and replacing -- the "
+                f"failure mode is structural, not a one-off bad section. "
+                f"Dismiss this rec to reset the counter if you've fixed the "
+                f"persona / pipeline; approve to archive and rehire later."
             ),
         ))
         added += 1

@@ -85,6 +85,11 @@ def approve(rec_id: int, session: Session = Depends(get_session)) -> Recommendat
         if p is None:
             raise HTTPException(409, f"Standing persona missing in DB: {rec.subject_slug}")
         personas.set_status(rec.subject_slug, PersonaStatus.archived)
+        # Reset the failure ledger for this agent. Approving a fire archives
+        # them out of the roster anyway, but keeping unresolved rows around
+        # would let stray queries still treat them as broken.
+        from api import report_failures
+        report_failures.mark_resolved_for(agent=rec.subject_slug)
 
     rec.status = RecommendationStatus.approved
     rec.resolved_at = datetime.now(UTC)
@@ -105,6 +110,12 @@ def dismiss(rec_id: int, session: Session = Depends(get_session)) -> Recommendat
         raise HTTPException(404, "Recommendation not found")
     if rec.status != RecommendationStatus.pending:
         raise HTTPException(400, f"Recommendation is already {rec.status}")
+    if rec.kind == RecommendationKind.fire:
+        # Dismissal = "false alarm, leave them on the team". Reset the
+        # failure ledger so the EIC's brief stops blacklisting them and
+        # the same rule doesn't immediately re-fire on the next review.
+        from api import report_failures
+        report_failures.mark_resolved_for(agent=rec.subject_slug)
     rec.status = RecommendationStatus.dismissed
     rec.resolved_at = datetime.now(UTC)
     session.add(rec)
