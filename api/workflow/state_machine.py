@@ -55,6 +55,7 @@ STAGE_ORDER: list[ReportStage] = [
     ReportStage.research,
     ReportStage.charts,
     ReportStage.draft,
+    ReportStage.section_audit,
     ReportStage.rebuttal,
     ReportStage.redteam,
     ReportStage.edit,
@@ -338,6 +339,7 @@ def _read_sources(wd: Path) -> list[dict[str, str | None]]:
 TEST_MODE_SKIP_STAGES: frozenset[ReportStage] = frozenset({
     ReportStage.recruit,       # no ad-hoc specialists
     ReportStage.charts,        # no chart generation
+    ReportStage.section_audit, # no per-section retry gate
     ReportStage.rebuttal,      # no cross-analyst critique
     ReportStage.redteam,       # no devil's advocate pass
     ReportStage.audit,         # no post-edit numerical audit
@@ -808,6 +810,9 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             _write(wd / f"section-{c['slug']}.md", result.text)
             _record(report.id, wd, result)
         return _next_stage(stage, report.mode)
+
+    if stage == ReportStage.section_audit:
+        return _run_section_audit(report, wd, cost, audit, models)
 
     if stage == ReportStage.rebuttal:
         # Each analyst sees the peer drafts and writes a one-paragraph
@@ -1516,6 +1521,276 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         return _next_stage(stage, report.mode)
 
     return ReportStage.done
+
+
+# ---------- section_audit gate ----------
+
+# Failure markers we consider disqualifying for a freshly drafted section.
+# Substring match (case-insensitive) -- agents phrase the same admission
+# many ways, so we hand-curate the set rather than trying to generalise.
+# Order matters only for which marker we report first.
+SECTION_FAILURE_MARKERS: tuple[str, ...] = (
+    "agent halted",
+    "data pull failed",
+    "notes failed to load",
+    "section pulled",
+    "the equity view will arrive",
+    "we did not answer",
+    "shipping that gap",
+    "retry next cycle",
+    "we are not going to manufacture",
+)
+
+
+def _section_failure_marker(text: str) -> str | None:
+    """Return the first failure marker found in `text` (lowercased), or None.
+    Match is plain substring on lowered text -- we don't try to be clever
+    about word boundaries; the markers are distinctive enough."""
+    if not text:
+        return None
+    lowered = text.lower()
+    for marker in SECTION_FAILURE_MARKERS:
+        if marker in lowered:
+            return marker
+    return None
+
+
+_SECTION_AUDIT_DIRNAME = "section-audit"
+_SECTION_AUDIT_MAX_ATTEMPTS = 3  # original draft + 2 retries; 3rd failure excludes
+
+
+def _section_audit_dir(wd: Path) -> Path:
+    d = wd / _SECTION_AUDIT_DIRNAME
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _section_attempt_count(wd: Path, slug: str) -> int:
+    """Per-section attempt counter. Lives in working dir (R2 hydrate covers
+    it on Railway rebuilds), readable from the filesystem for debugging."""
+    p = _section_audit_dir(wd) / f"{slug}.count"
+    if not p.exists():
+        return 1  # the original draft counts as attempt 1
+    try:
+        return int(p.read_text().strip() or "1")
+    except ValueError:
+        return 1
+
+
+def _bump_section_attempt(wd: Path, slug: str, value: int) -> None:
+    p = _section_audit_dir(wd) / f"{slug}.count"
+    p.write_text(str(value))
+
+
+def _exclude_section(wd: Path, slug: str, reason: str) -> None:
+    """Move section-{slug}.md into section-audit/excluded/ so it's recoverable
+    for debugging but invisible to downstream stages, which read only from
+    the live contributor set."""
+    src = wd / f"section-{slug}.md"
+    excluded_dir = _section_audit_dir(wd) / "excluded"
+    excluded_dir.mkdir(parents=True, exist_ok=True)
+    if src.exists():
+        body = src.read_text()
+        (excluded_dir / f"{slug}.md").write_text(
+            f"<!-- excluded by section_audit: {reason} -->\n\n{body}"
+        )
+        src.unlink()
+
+
+def _run_section_audit(
+    report: Report,
+    wd: Path,
+    cost: CostTracker,
+    audit,  # type: ignore[no-untyped-def]
+    models: dict[str, str],
+) -> ReportStage:
+    """Per-section failure-marker gate between draft and rebuttal.
+
+    For each contributor's section-{slug}.md, scan for failure markers. If a
+    marker is present, escalate by attempt number:
+      attempt 1 -> attempt 2: redraft only with doubled max_iterations
+                   against the existing notes (catches "ran out of iterations
+                   mid-synthesis", the cheapest retry tier).
+      attempt 2 -> attempt 3: full research() + draft() (catches "notes were
+                   corrupted or empty").
+      attempt 3 still failing: exclude. Move file to section-audit/excluded/,
+                   drop slug from contributor_slugs.
+
+    After exclusions: re-call brief with the smaller contributor set so the
+    EIC plans the report against what actually exists. If exclusions push
+    contributor count below report.min_contributors, or any required slug
+    was excluded, fail the whole report.
+    """
+    assert report.id is not None
+    brief = _read(wd / "brief.md")
+    contributors = _resolved_contributors(report, brief)
+    excluded: list[tuple[str, str]] = []  # (slug, reason)
+
+    for c in contributors:
+        slug = c["slug"]
+        section_path = wd / f"section-{slug}.md"
+        body = _read(section_path)
+        marker = _section_failure_marker(body)
+        if marker is None and body.strip():
+            continue  # clean section, nothing to do
+
+        # Treat empty-file as a failure too -- there's nothing to ship and
+        # downstream stages would render an orphan heading.
+        attempt = _section_attempt_count(wd, slug)
+        log.warning(
+            "section_audit: failure marker %r in section for %s (attempt %d)",
+            marker or "(empty section)", slug, attempt,
+        )
+        audit("section_audit_failure", {
+            "agent": slug,
+            "attempt": attempt,
+            "marker": marker or "(empty)",
+        })
+
+        # Attempt 2: redraft-only, doubled max_iters against existing notes.
+        if attempt < 2:
+            _bump_section_attempt(wd, slug, 2)
+            try:
+                analyst = _make_analyst(slug, cost, audit, models["analyst"])
+                notes = _read(wd / f"notes-{slug}.md")
+                result = analyst.draft(brief, notes, report.theme, max_iters=12)
+                _write(section_path, result.text)
+                _record(report.id, wd, result)
+                audit("section_audit_retry", {
+                    "agent": slug, "tier": "redraft_doubled_iters",
+                })
+            except Exception as e:  # noqa: BLE001
+                log.exception("section_audit attempt 2 failed for %s", slug)
+                audit("section_audit_retry_failed", {"agent": slug, "error": str(e)})
+            body = _read(section_path)
+            marker = _section_failure_marker(body)
+            if marker is None and body.strip():
+                continue
+            attempt = 2
+
+        # Attempt 3: fresh research() + draft().
+        if attempt < 3:
+            _bump_section_attempt(wd, slug, 3)
+            try:
+                analyst = _make_analyst(slug, cost, audit, models["analyst"])
+                from api import uploads as uploads_mod
+                has_uploads = bool(uploads_mod.list_documents(report.id))
+                research_result = analyst.research(
+                    brief, report.theme, wd,
+                    mode=report.mode,
+                    report_id=report.id,
+                    has_uploads=has_uploads,
+                )
+                _write(wd / f"notes-{slug}.md", research_result.text)
+                _record(report.id, wd, research_result)
+                _append_tool_outputs(wd, slug, research_result)
+                draft_result = analyst.draft(
+                    brief, research_result.text, report.theme, max_iters=12,
+                )
+                _write(section_path, draft_result.text)
+                _record(report.id, wd, draft_result)
+                audit("section_audit_retry", {
+                    "agent": slug, "tier": "fresh_research_and_draft",
+                })
+            except Exception as e:  # noqa: BLE001
+                log.exception("section_audit attempt 3 failed for %s", slug)
+                audit("section_audit_retry_failed", {"agent": slug, "error": str(e)})
+            body = _read(section_path)
+            marker = _section_failure_marker(body)
+            if marker is None and body.strip():
+                continue
+            attempt = 3
+
+        # Third strike: exclude.
+        reason = f"failure marker {marker!r} after {_SECTION_AUDIT_MAX_ATTEMPTS} attempts" \
+            if marker else f"empty section after {_SECTION_AUDIT_MAX_ATTEMPTS} attempts"
+        _exclude_section(wd, slug, reason)
+        excluded.append((slug, reason))
+        audit("section_audit_excluded", {"agent": slug, "reason": reason})
+
+    # If nothing was excluded, we're done.
+    if not excluded:
+        return _next_stage(ReportStage.section_audit, report.mode)
+
+    excluded_slugs = {s for s, _ in excluded}
+    surviving = [c["slug"] for c in contributors if c["slug"] not in excluded_slugs]
+
+    # Hard floor: if any required slug got excluded, or surviving contributors
+    # would fall below min_contributors, fail the entire report. We're not
+    # shipping a different report than was commissioned.
+    required_excluded = [s for s in report.required_slugs if s in excluded_slugs]
+    too_few = len(surviving) < report.min_contributors
+    if required_excluded or too_few:
+        msg_parts: list[str] = []
+        if required_excluded:
+            msg_parts.append(
+                "section_audit excluded required contributor(s): "
+                + ", ".join(required_excluded)
+            )
+        if too_few:
+            msg_parts.append(
+                f"section_audit left {len(surviving)} contributor(s); "
+                f"min_contributors={report.min_contributors}"
+            )
+        full_msg = "; ".join(msg_parts)
+        log.error("section_audit hard-fail for report %s: %s", report.id, full_msg)
+        with Session(engine) as session:
+            r = session.get(Report, report.id)
+            if r:
+                r.error = (r.error + "\n\n" + full_msg) if r.error else full_msg
+                r.stage = ReportStage.failed
+                session.add(r)
+                session.commit()
+        audit("section_audit_report_failed", {
+            "excluded": list(excluded_slugs),
+            "required_excluded": required_excluded,
+            "surviving": surviving,
+        })
+        return ReportStage.failed
+
+    # Soft path: shrink contributor_slugs and re-run the brief once with the
+    # smaller team so the EIC plans against what actually exists. team_override
+    # pins the surviving roster through subsequent _resolved_contributors calls.
+    with Session(engine) as session:
+        r = session.get(Report, report.id)
+        if r:
+            r.contributor_slugs = surviving
+            r.team_override = surviving
+            note = "section_audit excluded: " + ", ".join(
+                f"{s} ({reason})" for s, reason in excluded
+            )
+            r.error = (r.error + "\n\n" + note) if r.error else note
+            session.add(r)
+            session.commit()
+            report.contributor_slugs = surviving
+            report.team_override = surviving
+
+    # Re-brief once against the surviving contributor set. The EIC must not
+    # allude to the excluded sections, so the plan needs to be regenerated
+    # rather than patched. One LLM call per audit pass regardless of how
+    # many sections were excluded.
+    try:
+        from api import house_view as house_view_mod
+        eic = EditorInChief(cost, audit=audit, model=models["editor"])
+        roster = [
+            m for s in surviving if (m := _persona_meta(s))
+        ]
+        rebrief = eic.write_brief(
+            report.theme,
+            subtitle=report.subtitle,
+            available_contributors=roster,
+            past_reports=_past_reports_summary(exclude_id=report.id),
+            house_view=house_view_mod.get(),
+            primer=_read(wd / "primer.md") or None,
+            calibration=None,
+        )
+        _write(wd / "brief.md", rebrief.text)
+        _record(report.id, wd, rebrief)
+        audit("section_audit_rebrief", {"surviving": surviving})
+    except Exception:  # noqa: BLE001
+        log.exception("section_audit re-brief failed (non-blocking)")
+
+    return _next_stage(ReportStage.section_audit, report.mode)
 
 
 # ---------- failure-marker scrubber ----------

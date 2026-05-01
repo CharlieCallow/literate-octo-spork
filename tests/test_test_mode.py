@@ -30,6 +30,7 @@ def test_test_mode_skips_expensive_stages() -> None:
     expected_skipped = {
         ReportStage.recruit,       # ad-hoc specialist hiring
         ReportStage.charts,        # chart generation
+        ReportStage.section_audit, # per-section retry gate
         ReportStage.rebuttal,      # cross-analyst critique
         ReportStage.redteam,       # devil's advocate
         ReportStage.audit,         # post-edit numerical audit
@@ -66,9 +67,10 @@ def test_other_modes_still_use_full_chain() -> None:
     modes with their existing 13-step pipeline."""
     for mode in (ReportMode.standard, ReportMode.fast, ReportMode.deep):
         s = ReportStage.draft
-        # Next stage from draft should still be `rebuttal`, not jump
-        # past it the way test mode does.
-        assert _next_stage(s, mode) == ReportStage.rebuttal
+        # Next stage from draft should be `section_audit` (the per-section
+        # failure-marker gate), not jump past it the way test mode does.
+        assert _next_stage(s, mode) == ReportStage.section_audit
+        assert _next_stage(ReportStage.section_audit, mode) == ReportStage.rebuttal
 
 
 def test_test_mode_uses_haiku_for_everything() -> None:
