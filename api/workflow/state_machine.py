@@ -1237,26 +1237,36 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         if report.mode != ReportMode.test:
             try:
                 from api.agents.glossary import Glossary, is_empty
+                from api import ticker_resolutions as _tr
                 glossary = Glossary(cost, audit=audit)
-                # Pass the equity layer's ticker -> issuer resolutions so the
-                # glossary inherits them rather than running its own free
+                # Pull the authoritative ticker -> issuer-info map written
+                # during research and persist it on Report.tickers; the
+                # glossary reads from this rather than running its own free
                 # lookup (which is how "TLN = Talon Metals" sneaks in for a
                 # report whose central pair trade is long Talen Energy).
-                from api.data import yfinance as _yf
-                ticker_resolutions: dict[str, str] = {}
-                for c in calls_mod.calls_for_report(report.id):
-                    if c.asset and c.asset not in ticker_resolutions:
-                        try:
-                            name = _yf.get_ticker_name(c.asset)
-                        except Exception:  # noqa: BLE001
-                            name = None
-                        if name:
-                            ticker_resolutions[c.asset] = name
+                ticker_resolutions = _tr.resolve_for_report(report.id)
+                missing_tickers = _tr.audit_position_tickers(report.id)
+                if missing_tickers:
+                    note = (
+                        "ticker resolution failed for position-table entries: "
+                        + ", ".join(missing_tickers)
+                    )
+                    with Session(engine) as session:
+                        r = session.get(Report, report.id)
+                        if r is not None:
+                            r.error = (r.error + "\n\n" + note) if r.error else note
+                            session.add(r)
+                            session.commit()
                 gl_result = glossary.build(
                     edited_prose=edited,
                     ticker_resolutions=ticker_resolutions or None,
                 )
                 gl_text = gl_result.text or ""
+                # Hard filter: drop / rewrite any glossary line whose term is
+                # a position ticker, using Report.tickers as the allow-list.
+                # The prompt asks the model to do this, but a deterministic
+                # parse-time pass guarantees it.
+                gl_text = _tr.filter_glossary_md(gl_text, ticker_resolutions)
                 _record(report.id, wd, gl_result)
                 _write(wd / "glossary.md", gl_text)
                 if not is_empty(gl_text):
