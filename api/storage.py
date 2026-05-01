@@ -77,6 +77,7 @@ def upload_artifacts(report_id: int, wd: Path) -> int:
     for name in (
         "brief.md", "edited.md", "data-section.md", "sources.json",
         "redteam.md", "rebuttals.md", "glossary.md", "audited.md",
+        "reconciled.md", "reconciliation-log.md",
         "coverage.md",
     ):
         f = wd / name

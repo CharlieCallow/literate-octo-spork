@@ -1079,7 +1079,7 @@ def _build_reading_payload(report: Report, *, public_token: str | None = None) -
     # Working dir on Railway is ephemeral; markdown sources may be gone after a
     # rebuild even though the report is `done`. Pull them back from R2 when
     # they're missing locally so reading mode keeps working across rebuilds.
-    for name in ("edited.md", "brief.md", "data-section.md", "sources.json"):
+    for name in ("reconciled.md", "audited.md", "edited.md", "brief.md", "data-section.md", "sources.json"):
         if not (wd / name).exists() and storage.object_exists(report.id, name):
             storage.fetch_to_local(report.id, wd, name)
 
@@ -1088,7 +1088,14 @@ def _build_reading_payload(report: Report, *, public_token: str | None = None) -
     if not edited_path.exists():
         raise HTTPException(404, "Report content not on disk (working dir was wiped and not on R2)")
 
-    edited = edited_path.read_text(encoding="utf-8")
+    # Reading mode mirrors render's preference order: reconciled → audited → edited.
+    reconciled_text = (wd / "reconciled.md").read_text(encoding="utf-8") if (wd / "reconciled.md").exists() else ""
+    audited_text = (wd / "audited.md").read_text(encoding="utf-8") if (wd / "audited.md").exists() else ""
+    edited = (
+        reconciled_text.strip()
+        or audited_text.strip()
+        or edited_path.read_text(encoding="utf-8")
+    )
     brief = brief_path.read_text(encoding="utf-8") if brief_path.exists() else ""
 
     # Backfill: if the markdown is local but not yet on R2, push it now so the
@@ -1285,7 +1292,7 @@ def ask_analyst(
     # to edited.md, fall back to a tiny note about the report theme.
     wd = working_dir(report_id)
     body = ""
-    for fn in ("audited.md", "edited.md"):
+    for fn in ("reconciled.md", "audited.md", "edited.md"):
         p = wd / fn
         if p.exists() and p.read_text(encoding="utf-8").strip():
             body = p.read_text(encoding="utf-8")

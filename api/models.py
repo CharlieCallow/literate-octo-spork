@@ -27,6 +27,7 @@ class ReportStage(str, Enum):
     edit = "edit"
     position_audit = "position_audit"  # reconcile cover position table to body recommendations
     audit = "audit"      # ground every number in the edited prose against tool outputs
+    reconcile = "reconcile"  # holistic final pass: cross-section consistency, process artifacts, references
     render = "render"
     feedback = "feedback"
     housekeeping = "housekeeping"  # house view update, theme tags, calls, voice stats
