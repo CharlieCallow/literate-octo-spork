@@ -1026,6 +1026,9 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         # in different voices.
         differentiation_md = _read(wd / "differentiation.md").strip() or None
 
+        anchor_flags = _read_anchor_flags(
+            wd, [c["slug"] for c in contributors],
+        )
         result = eic.edit(
             brief=brief, sections=sections,
             chart_summary=chart_summary,
@@ -1035,6 +1038,7 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
             coverage_gaps=coverage_gaps_list or None,
             differentiation=differentiation_md,
             degraded_sections=degraded_sections or None,
+            anchor_thin_sections=anchor_flags or None,
         )
         _write(wd / "edited.md", result.text)
         _record(report.id, wd, result)
@@ -1662,6 +1666,72 @@ SECTION_FAILURE_MARKERS: tuple[str, ...] = (
 )
 
 
+# Quantified-anchor patterns. A paragraph is "anchored" if any pattern
+# matches at least once. Soft check only -- a section with > 30% un-anchored
+# paragraphs is surfaced to the EIC for revision, never auto-rejected.
+_ANCHOR_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\d+(?:\.\d+)?\s*%"),                          # 12% / 4.5%
+    re.compile(r"[\$£€¥]\s*\d"),                               # $45, £200
+    re.compile(
+        r"\d+(?:\.\d+)?\s*(?:bp|bps|x|MW|GW|TW|kWh|MWh|GWh|"
+        r"million|billion|trillion|barrels|bbl|mboe|tonnes|"
+        r"days|weeks|months|years|pp|ppt|percentage\s+points?|"
+        r"basis\s+points?)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\bQ[1-4]\s*\d{4}\b"),                         # Q3 2026
+    re.compile(r"\b(?:by|in|until|through|since|before|after)\s+\d{4}\b", re.IGNORECASE),
+    re.compile(r"\b(?:19|20)\d{2}\b"),                         # bare year
+    re.compile(r"\b\d+(?:\.\d+)?\s*:\s*\d+(?:\.\d+)?\b"),      # ratio 4:1
+    re.compile(r"\bnote\s+\d+\b", re.IGNORECASE),              # filing note 14
+)
+
+# Anchor-thin threshold: if more than this fraction of substantive paragraphs
+# lack a quantified anchor, surface to the EIC. 0.30 per spec.
+_ANCHOR_THIN_THRESHOLD = 0.30
+
+
+def _split_paragraphs(text: str) -> list[str]:
+    """Substantive paragraphs only -- skip headings, byline lines, blockquotes,
+    chart refs, and very short list items. We're checking analyst prose, not
+    structural scaffolding."""
+    paras: list[str] = []
+    for raw in re.split(r"\n\s*\n", text or ""):
+        p = raw.strip()
+        if not p:
+            continue
+        # Drop pure-heading or pure-byline blocks.
+        if all(
+            line.startswith(("#", ">", "**author:**", "**role:**"))
+            or line.strip().startswith("[chart:")
+            or not line.strip()
+            for line in p.splitlines()
+        ):
+            continue
+        # Skip pure bullet lists where every line is a short bullet (< 80 chars
+        # of body) -- those are structural, not prose paragraphs.
+        lines = [ln for ln in p.splitlines() if ln.strip()]
+        if lines and all(re.match(r"\s*[-*]\s+", ln) for ln in lines):
+            if all(len(ln.strip()) < 80 for ln in lines):
+                continue
+        # Need at least 25 words to count as substantive.
+        if len(p.split()) < 25:
+            continue
+        paras.append(p)
+    return paras
+
+
+def _paragraph_has_anchor(p: str) -> bool:
+    return any(pat.search(p) for pat in _ANCHOR_PATTERNS)
+
+
+def _anchor_audit(text: str) -> tuple[int, int, list[str]]:
+    """Return (anchored, total, unanchored_paragraphs) for a section body."""
+    paras = _split_paragraphs(text)
+    unanchored = [p for p in paras if not _paragraph_has_anchor(p)]
+    return len(paras) - len(unanchored), len(paras), unanchored
+
+
 def _section_failure_marker(text: str) -> str | None:
     """Return the first failure marker found in `text` (lowercased), or None.
     Match is plain substring on lowered text -- we don't try to be clever
@@ -1717,6 +1787,63 @@ def _exclude_section(wd: Path, slug: str, reason: str) -> None:
         src.unlink()
 
 
+def _check_anchor_thinness(
+    report_id: int | None,
+    wd: Path,
+    slug: str,
+    body: str,
+    audit,  # type: ignore[no-untyped-def]
+) -> None:
+    """Soft check: if > 30% of a section's substantive paragraphs lack a
+    quantified anchor, write `section-audit/{slug}.anchors.md` with the
+    flagged paragraphs and emit `section_audit_anchor_thin`. The edit stage
+    folds these into the EIC's prompt; we never exclude on this basis."""
+    anchored, total, unanchored = _anchor_audit(body)
+    if total < 3 or not unanchored:
+        return
+    ratio = len(unanchored) / total
+    if ratio <= _ANCHOR_THIN_THRESHOLD:
+        return
+    flag_path = _section_audit_dir(wd) / f"{slug}.anchors.md"
+    snippets = "\n\n".join(
+        f"- > {p[:240].replace(chr(10), ' ')}{'…' if len(p) > 240 else ''}"
+        for p in unanchored
+    )
+    flag_path.write_text(
+        f"<!-- anchor-thin flag: {len(unanchored)}/{total} paragraphs "
+        f"lack a quantified anchor ({ratio:.0%}) -->\n\n"
+        f"Section `{slug}` has {len(unanchored)} of {total} substantive "
+        f"paragraphs without a quantified anchor (number, %, ratio, "
+        f"threshold, dated milestone). Flagged paragraphs:\n\n{snippets}\n"
+    )
+    log.info(
+        "section_audit: anchor-thin flag for %s (%d/%d, %.0f%%)",
+        slug, len(unanchored), total, ratio * 100,
+    )
+    audit("section_audit_anchor_thin", {
+        "agent": slug,
+        "paragraphs_total": total,
+        "paragraphs_unanchored": len(unanchored),
+        "ratio": round(ratio, 2),
+    })
+
+
+def _read_anchor_flags(wd: Path, surviving_slugs: list[str]) -> list[dict[str, str]]:
+    """Pick up anchor-thin flag files written by section_audit. Edit stage
+    passes these to the EIC so the revision pass tightens un-anchored prose."""
+    out: list[dict[str, str]] = []
+    audit_dir = wd / _SECTION_AUDIT_DIRNAME
+    if not audit_dir.exists():
+        return out
+    surviving = set(surviving_slugs)
+    for path in sorted(audit_dir.glob("*.anchors.md")):
+        slug = path.stem.removesuffix(".anchors")
+        if slug not in surviving:
+            continue
+        out.append({"slug": slug, "body": path.read_text()})
+    return out
+
+
 def _run_section_audit(
     report: Report,
     wd: Path,
@@ -1752,6 +1879,7 @@ def _run_section_audit(
         body = _read(section_path)
         marker = _section_failure_marker(body)
         if marker is None and body.strip():
+            _check_anchor_thinness(report.id, wd, slug, body, audit)
             continue  # clean section, nothing to do
 
         # Treat empty-file as a failure too -- there's nothing to ship and
@@ -1799,6 +1927,7 @@ def _run_section_audit(
             body = _read(section_path)
             marker = _section_failure_marker(body)
             if marker is None and body.strip():
+                _check_anchor_thinness(report.id, wd, slug, body, audit)
                 continue
             attempt = 2
 
@@ -1839,6 +1968,7 @@ def _run_section_audit(
             body = _read(section_path)
             marker = _section_failure_marker(body)
             if marker is None and body.strip():
+                _check_anchor_thinness(report.id, wd, slug, body, audit)
                 continue
             attempt = 3
 

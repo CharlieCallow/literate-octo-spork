@@ -207,6 +207,7 @@ Be opinionated. This is the brief the team works from.
         coverage_gaps: list[str] | None = None,
         differentiation: str | None = None,
         degraded_sections: list[dict[str, str]] | None = None,
+        anchor_thin_sections: list[dict[str, str]] | None = None,
     ) -> AgentResult:
         sec_blob = "\n\n---\n\n".join(
             f"## SECTION ({s['author']} — {s.get('role','analyst')}): {s['heading']}\n\n{s['body']}"
@@ -304,6 +305,32 @@ Be opinionated. This is the brief the team works from.
                 "promises an answer the body doesn't deliver. Do NOT add a "
                 "closing line that names the gap.\n"
             )
+        # Anchor-thin flag: section_audit found > 30% of substantive paragraphs
+        # in these sections lack a quantified anchor (number, %, ratio, dated
+        # milestone). Soft signal -- the EIC tightens unsupported qualitative
+        # claims in revision; never auto-rejected.
+        anchor_blob = ""
+        if anchor_thin_sections:
+            anchor_lines = "\n\n".join(
+                f"### `{a['slug']}`\n\n{a['body'].strip()}"
+                for a in anchor_thin_sections if a.get("body", "").strip()
+            )
+            if anchor_lines:
+                anchor_blob = (
+                    "\nQUANTIFIED-ANCHOR FLAG (sections with > 30% of "
+                    "substantive paragraphs lacking a number, percentage, "
+                    "ratio, threshold, or dated milestone):\n\n"
+                    f"{anchor_lines}\n\n"
+                    "In your revision pass on these sections: every "
+                    "substantive paragraph should carry at least one "
+                    "specific quantified anchor the reader can verify. "
+                    "For each flagged paragraph, either inject the missing "
+                    "number from the analyst's notes / charts, compress it "
+                    "into a neighbouring anchored paragraph, or cut it. "
+                    "Do not flatten the analyst's voice while doing so -- "
+                    "tighten, don't homogenise.\n"
+                )
+
         prompt = f"""You are editing a draft Forte Research report. Your job: tighten, kill weak claims, write the opening and the bottom-line, integrate the bear case, and surface internal disagreement. PRESERVE EACH SECTION'S VOICE — homogenising into a house voice is the failure mode. The brief is below for reference, then the analyst sections, then a summary of charts, then Saoirse's bear note.
 
 BRIEF:
@@ -317,7 +344,7 @@ SECTIONS:
 CHARTS:
 
 {chart_summary}
-{bear_blob}{rebuttal_blob}{diversity_blob}{differentiation_blob}{degraded_blob}{coverage_blob}
+{bear_blob}{rebuttal_blob}{diversity_blob}{differentiation_blob}{degraded_blob}{coverage_blob}{anchor_blob}
 Conviction tags: analysts mark claims with `{{c1}}` to `{{c5}}` (1 = throwaway, 5 = high conviction). CULL `{{c1}}` and `{{c2}}` claims when you compress; keep `{{c3}}+`. The tags themselves are stripped before render — just use them as a signal for what to cut.
 
 Closing structure: the report has exactly THREE closing blocks. Nothing else. No "Pre-Mortem", no "Where We'd Be Wrong" callout, no "When We'll Know We're Wrong" callout, no editor's note in the body (post-mortem editorial notes belong in housekeeping, not the rendered PDF). The three blocks are:
