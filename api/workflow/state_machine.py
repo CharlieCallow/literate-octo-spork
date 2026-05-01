@@ -59,6 +59,7 @@ STAGE_ORDER: list[ReportStage] = [
     ReportStage.rebuttal,
     ReportStage.redteam,
     ReportStage.edit,
+    ReportStage.position_audit,
     ReportStage.audit,
     ReportStage.render,
     ReportStage.feedback,
@@ -342,6 +343,7 @@ TEST_MODE_SKIP_STAGES: frozenset[ReportStage] = frozenset({
     ReportStage.section_audit, # no per-section retry gate
     ReportStage.rebuttal,      # no cross-analyst critique
     ReportStage.redteam,       # no devil's advocate pass
+    ReportStage.position_audit, # no call extraction on smoke runs anyway
     ReportStage.audit,         # no post-edit numerical audit
     ReportStage.feedback,      # no persona-feedback writes
     ReportStage.housekeeping,  # no house view / tagger / threader / voice stats
@@ -1050,6 +1052,9 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
                     session.commit()
         return _next_stage(stage, report.mode)
 
+    if stage == ReportStage.position_audit:
+        return _run_position_audit(report, wd, cost, audit)
+
     if stage == ReportStage.audit:
         # Two passes here:
         # 1. Strip failure markers leaked from earlier stages (timeouts,
@@ -1153,8 +1158,18 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         # up in the position tracker. Idempotent: skip if this report already
         # has rows (rerunning render after a fix shouldn't dupe positions).
         # Test mode skips this LLM call entirely -- no positions on a smoke run.
+        # Position-audit fallback: when that stage ran it persisted the
+        # reconciled call set (or persisted nothing because every candidate
+        # failed body defense). Either way, its marker file means we must
+        # not re-extract here -- doing so would resurrect tickers the audit
+        # just dropped.
         from api import calls as calls_mod
-        if report.mode != ReportMode.test and not calls_mod.has_calls_for(report.id):
+        position_audit_ran = (wd / "position-audit.md").exists()
+        if (
+            report.mode != ReportMode.test
+            and not calls_mod.has_calls_for(report.id)
+            and not position_audit_ran
+        ):
             try:
                 contributors_for_calls = _resolved_contributors(report, brief)
                 extractor = calls_mod.CallExtractor(cost, audit=audit)
@@ -1846,6 +1861,208 @@ def _run_section_audit(
         log.exception("section_audit re-brief failed (non-blocking)")
 
     return _next_stage(ReportStage.section_audit, report.mode)
+
+
+# ---------- position_audit gate ----------
+
+# Recommendation verbs the audit accepts as defending a ticker for a given
+# table direction. Order doesn't matter; matched as case-insensitive whole
+# words within a window of the ticker mention.
+_POSITION_REC_VERBS: dict[str, tuple[str, ...]] = {
+    "long": (
+        "long", "buy", "buying", "own", "owning", "overweight", "ow",
+        "accumulate", "we like", "we'd own", "go long", "stay long",
+        "bullish", "constructive on", "prefer",
+    ),
+    "short": (
+        "short", "shorting", "sell", "selling", "underweight", "uw",
+        "bearish", "bearish on", "we'd short",
+    ),
+    "fade": (
+        "fade", "fading", "fade the", "short", "shorting", "sell", "selling",
+        "bet against",
+    ),
+    "avoid": (
+        "avoid", "avoiding", "stay away", "stay clear", "underweight", "uw",
+        "no position", "do not own", "don't own", "pass on",
+    ),
+}
+
+# How wide a window around each ticker mention we scan for a matching verb.
+# 240 characters is roughly two sentences -- generous enough to catch a verb
+# in the prior or following clause without bridging unrelated paragraphs.
+_POSITION_DEFENSE_WINDOW = 240
+
+
+def _ticker_mention_re(ticker: str) -> re.Pattern[str]:
+    """A whole-word matcher for a ticker. Won't match inside a longer
+    alphanumeric run (so `ASE` doesn't match inside `LASER`)."""
+    return re.compile(rf"(?<![A-Z0-9]){re.escape(ticker)}(?![A-Z0-9])")
+
+
+def _ticker_defended(
+    ticker: str, direction: str, sections: list[dict[str, object]],
+) -> bool:
+    """True iff at least one analyst section names the ticker AND, within a
+    short window of the mention, contains a recommendation verb that matches
+    the table direction. The cover position table cannot stand on a
+    category-level argument -- the body must defend the specific ticker."""
+    if not ticker:
+        return False
+    verbs = _POSITION_REC_VERBS.get(direction.lower())
+    if not verbs:
+        return False
+    ticker_re = _ticker_mention_re(ticker)
+    verb_re = re.compile(
+        r"\b(?:" + "|".join(re.escape(v) for v in verbs) + r")\b",
+        re.IGNORECASE,
+    )
+    for s in sections:
+        body = str(s.get("body", "") or "")
+        if not body:
+            continue
+        for m in ticker_re.finditer(body):
+            start = max(0, m.start() - _POSITION_DEFENSE_WINDOW)
+            end = min(len(body), m.end() + _POSITION_DEFENSE_WINDOW)
+            if verb_re.search(body[start:end]):
+                return True
+    return False
+
+
+def _ticker_mentioned(ticker: str, sections: list[dict[str, object]]) -> bool:
+    if not ticker:
+        return False
+    ticker_re = _ticker_mention_re(ticker)
+    return any(
+        ticker_re.search(str(s.get("body", "") or "")) for s in sections
+    )
+
+
+def _run_position_audit(
+    report: Report,
+    wd: Path,
+    cost: CostTracker,
+    audit,  # type: ignore[no-untyped-def]
+) -> ReportStage:
+    """Reconcile the cover position table to the body recommendations.
+
+    Pull candidate calls from the edited prose, then for each ticker check
+    that an analyst section both names it AND defends it with a verb that
+    matches the table direction. Tickers that fail are dropped from the
+    persisted call set so they never land on the cover -- a position table
+    cannot stand on a category-level argument.
+
+    Idempotent: re-running clears any previously persisted calls for this
+    report and re-extracts against the current edited prose. The render
+    stage skips its own extraction when this stage's marker file exists.
+    """
+    assert report.id is not None
+    from api import calls as calls_mod
+    from api.models import Call
+
+    edited = _read(wd / "edited.md")
+    if not edited.strip():
+        _write(wd / "position-audit.md", "_position audit skipped: no edited prose._\n")
+        return _next_stage(ReportStage.position_audit, report.mode)
+
+    parsed = parse_edited(edited)
+    sections: list[dict[str, object]] = [
+        s for s in parsed.get("sections", []) or []  # type: ignore[union-attr]
+        if isinstance(s, dict)
+    ]
+    if not sections:
+        _write(wd / "position-audit.md", "_position audit skipped: no analyst sections in edited prose._\n")
+        return _next_stage(ReportStage.position_audit, report.mode)
+
+    # Idempotent re-run: drop any existing calls so the persist below isn't
+    # additive on top of a stale extraction.
+    if calls_mod.has_calls_for(report.id):
+        with Session(engine) as session:
+            existing = session.exec(
+                select(Call).where(Call.report_id == report.id)
+            ).all()
+            for row in existing:
+                session.delete(row)
+            session.commit()
+
+    brief = _read(wd / "brief.md")
+    contributors = _resolved_contributors(report, brief)
+    redteam_text = _read(wd / "redteam.md").strip()
+    if redteam_text.lower().startswith("_red-team pass failed"):
+        redteam_text = ""
+
+    try:
+        extractor = calls_mod.CallExtractor(cost, audit=audit)
+        ext_result = extractor.extract(
+            prose=edited,
+            contributor_slugs=[c["slug"] for c in contributors],
+            redteam_prose=redteam_text or None,
+        )
+        candidates = calls_mod.parse_extracted(ext_result.text)
+        _record(report.id, wd, ext_result)
+    except Exception:  # noqa: BLE001
+        log.exception("position_audit: extraction failed (non-blocking)")
+        _write(wd / "position-audit.md", "_position audit: extraction failed; render will fall back._\n")
+        return _next_stage(ReportStage.position_audit, report.mode)
+
+    # Devil's advocate contributes through the redteam pass, not the roster --
+    # whitelist that slug so her "trade we're missing" call survives.
+    slug_set = {c["slug"] for c in contributors}
+    slug_set.add("devils-advocate")
+    candidates = [c for c in candidates if c["contributor_slug"] in slug_set]
+
+    surviving: list[dict[str, object]] = []
+    dropped: list[tuple[str, str, str]] = []
+    for cand in candidates:
+        ticker = str(cand.get("asset", ""))
+        direction = str(cand.get("direction", ""))
+        if _ticker_defended(ticker, direction, sections):
+            surviving.append(cand)
+            continue
+        if _ticker_mentioned(ticker, sections):
+            reason = "named but no body recommendation matched"
+        else:
+            reason = "absent from analyst sections"
+        dropped.append((ticker, direction, reason))
+
+    calls_mod.persist(report.id, surviving)  # type: ignore[arg-type]
+
+    lines: list[str] = ["# Position audit\n"]
+    if surviving:
+        lines.append("## Defended (kept on cover)\n")
+        for c in surviving:
+            lines.append(
+                f"- `{c.get('asset')}` {c.get('direction')} "
+                f"({c.get('contributor_slug')})"
+            )
+        lines.append("")
+    if dropped:
+        lines.append("## Dropped (no body defense)\n")
+        for t, d, reason in dropped:
+            lines.append(f"- `{t}` {d}: {reason}")
+        lines.append("")
+        log.warning(
+            "position_audit: dropped %d undefended ticker(s) for report %s: %s",
+            len(dropped), report.id,
+            ", ".join(f"{t}/{d}" for t, d, _ in dropped),
+        )
+        with Session(engine) as session:
+            r = session.get(Report, report.id)
+            if r:
+                note = (
+                    "Position audit dropped undefended ticker(s) from the "
+                    "cover: "
+                    + "; ".join(
+                        f"{t} ({d}) -- {reason}" for t, d, reason in dropped
+                    )
+                )
+                r.error = (r.error + "\n\n" + note) if r.error else note
+                session.add(r)
+                session.commit()
+    if not surviving and not dropped:
+        lines.append("_No candidate positions extracted from the edited prose._")
+    _write(wd / "position-audit.md", "\n".join(lines) + "\n")
+    return _next_stage(ReportStage.position_audit, report.mode)
 
 
 # ---------- failure-marker scrubber ----------
