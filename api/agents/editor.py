@@ -49,6 +49,45 @@ Direct, not nice. No headings, no list -- just a paragraph. Stay in your voice.
 """
         return self.run(prompt, max_tokens=512)
 
+    def retitle(
+        self,
+        *,
+        theme: str,
+        rejected_title: str,
+        rejected_subtitle: str,
+        reasons: list[str],
+    ) -> AgentResult:
+        """Re-prompt for a fresh TITLE / SUBTITLE pair after the render-stage
+        validator rejected the previous attempt. The model sees the exact
+        rejection reasons and the rejected output so it doesn't repeat the
+        same shape."""
+        reason_blob = "\n".join(f"- {r}" for r in reasons) or "- (no specific reason given)"
+        prompt = f"""The render stage rejected your title/subtitle for this report. Produce a fresh pair that satisfies every rule below.
+
+THEME: {theme}
+
+REJECTED TITLE: {rejected_title!r}
+REJECTED SUBTITLE: {rejected_subtitle!r}
+
+REASONS THE RENDER STAGE REJECTED IT:
+{reason_blob}
+
+Rules (every one is hard -- the validator will bounce again if any is broken):
+- TITLE is 2-6 words. Names the category or the trade. NO TERMINAL PERIOD.
+- SUBTITLE is 4-12 words. Thesis as a PHRASE, not a sentence. NO TERMINAL PERIOD.
+- Examples of good titles: "Oil Flash Note", "The CPO Trade", "SpaceX Play", "The SMR Obituary".
+- Examples of good subtitles: "The illusion of plenty", "Why the substrate, not the transceiver, captures the interconnect transition", "Hyperscalers are paying scarcity rent for 1970s reactors".
+
+Output EXACTLY this, nothing else:
+
+# TITLE
+<2-6 words, no terminal period>
+
+# SUBTITLE
+<4-12 words, no terminal period>
+"""
+        return self.run(prompt, max_tokens=256, max_iters=1)
+
     def update_house_view(
         self,
         *,
@@ -157,15 +196,23 @@ DATA SOURCES THE TEAM CAN PULL FROM:
 - Wikipedia -- definitional and background content.
 - Web search -- current news, headlines, broker notes.
 
-Title-and-subtitle discipline: report TITLES are at most 6 words. The detailed thesis goes in the SUBTITLE, which can be longer. Bad: "Optical interconnect just became the new I/O wall. Copper maxed out at 200G/lane, optics are now the moat." Good: title "The CPO Trade" / subtitle "Why the substrate, not the transceiver, captures the interconnect transition." If the incoming THEME above is already a 20-word sentence, your SUBTITLE inherits the long thesis -- the cover layer caps the title mechanically -- but you should still write a SUBTITLE that stands on its own as the long-form framing.
+Title-and-subtitle template (the render stage validates this and bounces non-conforming output back to you):
+
+- TITLE: 2-6 words. Names the category or the trade. No terminal period. Examples: "Oil Flash Note", "The CPO Trade", "SpaceX Play", "The SMR Obituary".
+- SUBTITLE: 4-12 words. The thesis as a phrase, not a sentence. No terminal period. Examples: "The illusion of plenty", "Why the substrate, not the transceiver, captures the interconnect transition", "Hyperscalers are paying scarcity rent for 1970s reactors".
+
+The most common failure mode is writing the subtitle as a sentence with a terminal period. Don't -- it's a phrase. If the incoming THEME is itself a 20-word sentence, distil it: the TITLE names the category in 2-6 words and the SUBTITLE captures the thesis in 4-12, neither ending in a period.
 
 Output the brief in markdown using EXACTLY these literal section headings (they're parsed by the workflow):
 
 # ANGLE
 <one sentence — what this report is actually arguing>
 
+# TITLE
+<2-6 words. Names the category or the trade. No terminal period. Goes on the cover.>
+
 # SUBTITLE
-<one sentence — the detailed thesis. Can be longer than the title. Goes on the cover under the (max-6-word) title.>
+<4-12 words. Thesis as a phrase, not a sentence. No terminal period. Goes on the cover under the title.>
 
 # QUESTIONS
 1. <question 1>
