@@ -60,6 +60,7 @@ class Analyst(Agent):
         mode: ReportMode = ReportMode.standard,
         report_id: int | None = None,
         has_uploads: bool = False,
+        max_iters: int | None = None,
     ) -> AgentResult:
         upload_note = (
             "\n\nThe user attached research notes / CSVs to this report. "
@@ -153,12 +154,13 @@ Be opinionated; hedging without conviction is the failure mode. Output ~300-500 
         # and tighten the loop hard. deep: bigger token + iter budget for
         # thorough research.
         server_tools = [] if mode in (ReportMode.test, ReportMode.fast) else [web_search_tool()]
-        max_iters = {
+        default_max_iters = {
             ReportMode.test: 2,
             ReportMode.fast: 4,
             ReportMode.standard: 6,
             ReportMode.deep: 10,
         }[mode]
+        max_iters = max_iters if max_iters is not None else default_max_iters
         max_tokens = {
             ReportMode.test: 1024,
             ReportMode.fast: 2048,
@@ -213,7 +215,14 @@ Output the paragraph and nothing else. No headings, no preamble.
 """
         return self.run(prompt, max_tokens=512, max_iters=1)
 
-    def draft(self, brief: str, notes: str, theme: str) -> AgentResult:
+    def draft(
+        self,
+        brief: str,
+        notes: str,
+        theme: str,
+        *,
+        max_iters: int | None = None,
+    ) -> AgentResult:
         prompt = f"""Draft your section of the report based on the notes below. Stay in your voice (the persona file is your identity). The Editor will preserve voice when editing -- write in the voice you actually want to read.
 
 BRIEF:
@@ -234,4 +243,7 @@ Forecast horizons. Every future-tense claim must include an explicit horizon -- 
 
 Price targets on single-stock picks. Every directional call on an individual equity ticker (long or short on a single name -- not ETFs, not indices, not macro instruments) MUST carry a numeric price target alongside the horizon. Format: "long NVDA to $185 by Q3 2026" or "short BA, target $140 within 6 months". The target should be defensible from your evidence -- a multiple on a forward number, a sum-of-the-parts, a downside-to-book, whatever your epistemology supports -- not a round-number guess. No target means the pick is a view, not a call, and the extractor will drop it. ETFs, baskets, FX, rates, commodities and crypto don't need a number; for those the horizon is enough.
 """
-        return self.run(prompt, max_tokens=2048)
+        run_kwargs: dict[str, object] = {"max_tokens": 2048}
+        if max_iters is not None:
+            run_kwargs["max_iters"] = max_iters
+        return self.run(prompt, **run_kwargs)  # type: ignore[arg-type]

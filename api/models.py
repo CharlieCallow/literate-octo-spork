@@ -21,6 +21,7 @@ class ReportStage(str, Enum):
     research = "research"
     charts = "charts"
     draft = "draft"
+    section_audit = "section_audit"  # per-section failure-marker gate; retries or excludes
     rebuttal = "rebuttal"  # each analyst's reaction to peer drafts -- seeds DISAGREEMENT
     redteam = "redteam"  # bear / devil's-advocate pass on the drafts
     edit = "edit"
@@ -57,6 +58,13 @@ class Report(SQLModel, table=True):
     budget_cap_usd: float | None = None  # overrides settings.cost_per_report_usd if set
     team_override: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
     contributor_slugs: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    # section_audit floor: if exclusions push the live contributor count below
+    # this, the report fails entirely rather than reshaping. Keeps a degraded
+    # run from silently shipping as a different report than was commissioned.
+    min_contributors: int = Field(default=3)
+    # Slugs the brief tagged as load-bearing -- excluding any one of them at
+    # section_audit time fails the report regardless of min_contributors.
+    required_slugs: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
     # Theme graph: tickers + themes mentioned in the published report.
     # Populated in the housekeeping stage; read by the Scout to weight
     # natural follow-ups in the daily digest.
