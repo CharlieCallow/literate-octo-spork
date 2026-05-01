@@ -70,6 +70,18 @@ class Report(SQLModel, table=True):
     # natural follow-ups in the daily digest.
     mentioned_tickers: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
     mentioned_themes: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    # Authoritative ticker -> issuer-info map populated as the equity analyst
+    # pulls price history. Shape: {ticker: {company_name, exchange, sector, ...}}.
+    # The glossary builder reads from this (rather than running its own free
+    # lookup) so a ticker that collides with an unrelated company name -- TLN
+    # is the canonical foot-gun, resolves to Talen Energy here but to Talon
+    # Metals on a free name search -- gets the same answer everywhere in the
+    # report. The audit stage flags any position-table ticker missing from
+    # this dict so a silent yfinance lookup failure doesn't ship as a
+    # confidently-wrong glossary entry.
+    tickers: dict[str, dict[str, str]] = Field(
+        default_factory=dict, sa_column=Column(JSON, nullable=False),
+    )
     # Source-diversity check: max share of citations from any one domain.
     # Render-time fills this in; >40% triggers a "lazy research" flag in the UI.
     max_domain_share: float | None = None

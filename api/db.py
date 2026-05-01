@@ -142,6 +142,8 @@ def _migrate_sqlite() -> None:
             # section_audit floor + load-bearing slug list (M-failure-modes).
             ("reports", "ALTER TABLE reports ADD COLUMN min_contributors INTEGER NOT NULL DEFAULT 3"),
             ("reports", "ALTER TABLE reports ADD COLUMN required_slugs JSON NOT NULL DEFAULT '[]'"),
+            # Resolved ticker -> issuer-info map (see Report.tickers).
+            ("reports", "ALTER TABLE reports ADD COLUMN tickers JSON NOT NULL DEFAULT '{}'"),
         ]
         with engine.connect() as conn:
             for _table, sql in additions:
@@ -181,6 +183,8 @@ def _migrate_sqlite() -> None:
             # subsequent SELECTs blow up under the NOT NULL constraint.
             "ALTER TABLE reports ADD COLUMN IF NOT EXISTS min_contributors INTEGER NOT NULL DEFAULT 3",
             "ALTER TABLE reports ADD COLUMN IF NOT EXISTS required_slugs JSON NOT NULL DEFAULT '[]'::json",
+            # Resolved ticker -> issuer-info map (see Report.tickers).
+            "ALTER TABLE reports ADD COLUMN IF NOT EXISTS tickers JSON NOT NULL DEFAULT '{}'::json",
             # uploaded_documents: created_all() handles fresh deploys; this
             # CREATE-IF-NOT-EXISTS keeps the table present on existing prod
             # databases that pre-date the upload feature.

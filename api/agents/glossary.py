@@ -34,24 +34,38 @@ class Glossary(Agent):
         self,
         *,
         edited_prose: str,
-        ticker_resolutions: dict[str, str] | None = None,
+        ticker_resolutions: dict[str, dict[str, str]] | None = None,
     ) -> AgentResult:
         # Ticker resolutions come from the same yfinance pull the equity
         # analyst used. Pin them so a ticker that collides with an unrelated
         # company name (TLN -> Talon Metals vs. the actual Talen Energy) gets
-        # the same answer in the glossary as in the position table.
+        # the same answer in the glossary as in the position table. The
+        # resolution dict is also enforced as a hard allow-list at parse
+        # time -- see filter_glossary_md in api.ticker_resolutions.
         resolutions_blob = ""
         if ticker_resolutions:
+            def _fmt(info: dict[str, str]) -> str:
+                name = info.get("company_name", "")
+                bits = [name]
+                for k in ("exchange", "sector"):
+                    v = info.get(k)
+                    if v:
+                        bits.append(v)
+                return ", ".join(b for b in bits if b)
             lines = "\n".join(
-                f"- **{tk}** = {name}"
-                for tk, name in sorted(ticker_resolutions.items())
+                f"- **{tk}** = {_fmt(info)}"
+                for tk, info in sorted(ticker_resolutions.items())
+                if info.get("company_name")
             )
             resolutions_blob = (
                 "\nTICKER RESOLUTIONS (authoritative -- the equity analyst pulled "
                 "price history for these tickers and got these issuers; if you "
                 "define any of these tickers in the glossary, use this name "
                 "verbatim and DO NOT cross-reference an unrelated company that "
-                "shares the symbol):\n\n"
+                "shares the symbol. You are also FORBIDDEN from emitting a "
+                "glossary entry for any equity ticker that is not in this "
+                "list -- if you don't have an authoritative resolution, omit "
+                "the term):\n\n"
                 f"{lines}\n"
             )
         prompt = f"""You are writing a Glossary appendix for a Forte Research report. Read the edited prose and identify terms a generalist reader wouldn't know on first appearance: acronyms ("HBM", "TAM", "BAUFV"), domain jargon ("operator margin", "ASO", "convoyance"), regulatory codes ("ITC", "PJM"), drug names, niche tickers used non-obviously, etc.{resolutions_blob}
