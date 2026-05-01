@@ -139,6 +139,9 @@ def _migrate_sqlite() -> None:
             ("reports", "ALTER TABLE reports ADD COLUMN claim_density REAL"),
             # Per-report render toggles (hide_bylines, hide_positions, ...).
             ("reports", "ALTER TABLE reports ADD COLUMN render_options JSON DEFAULT '{}'"),
+            # section_audit floor + load-bearing slug list (M-failure-modes).
+            ("reports", "ALTER TABLE reports ADD COLUMN min_contributors INTEGER NOT NULL DEFAULT 3"),
+            ("reports", "ALTER TABLE reports ADD COLUMN required_slugs JSON NOT NULL DEFAULT '[]'"),
         ]
         with engine.connect() as conn:
             for _table, sql in additions:
@@ -172,6 +175,12 @@ def _migrate_sqlite() -> None:
             "ALTER TABLE reports ADD COLUMN IF NOT EXISTS claim_density DOUBLE PRECISION",
             # Per-report render toggles (hide_bylines, hide_positions, ...).
             "ALTER TABLE reports ADD COLUMN IF NOT EXISTS render_options JSON DEFAULT '{}'::json",
+            # section_audit floor + load-bearing slug list. Both are NOT NULL
+            # in the model, so existing rows need a server-side default at
+            # ADD COLUMN time -- otherwise the back-fill leaves NULLs and
+            # subsequent SELECTs blow up under the NOT NULL constraint.
+            "ALTER TABLE reports ADD COLUMN IF NOT EXISTS min_contributors INTEGER NOT NULL DEFAULT 3",
+            "ALTER TABLE reports ADD COLUMN IF NOT EXISTS required_slugs JSON NOT NULL DEFAULT '[]'::json",
             # uploaded_documents: created_all() handles fresh deploys; this
             # CREATE-IF-NOT-EXISTS keeps the table present on existing prod
             # databases that pre-date the upload feature.
