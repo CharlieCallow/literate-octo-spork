@@ -720,12 +720,21 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         ]
         from api import uploads as uploads_mod
         has_uploads = bool(uploads_mod.list_documents(report.id))
+        # Audit-gate retry: if the previous audit stage rejected this report
+        # for low primary-source share, it dropped a marker file in the
+        # working dir. Read it and pass through to every analyst so the
+        # second pass runs under the primary-source-only retry brief.
+        from api.agents.scout import PRIMARY_SOURCE_RETRY_FILENAME
+        retry_path = wd / PRIMARY_SOURCE_RETRY_FILENAME
+        retry_brief = _read(retry_path) if retry_path.exists() else ""
+        retry_brief = retry_brief.strip() or None
         research_calls: list[Callable[[], AgentResult]] = [
             (lambda a=a: a.research(  # type: ignore[misc]
                 brief, report.theme, wd,
                 mode=report.mode,
                 report_id=report.id,
                 has_uploads=has_uploads,
+                retry_brief=retry_brief,
             ))
             for a in analysts
         ]
@@ -1051,6 +1060,75 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         return _next_stage(stage, report.mode)
 
     if stage == ReportStage.audit:
+        # Source-quality gate (runs before the numeric audit). If the
+        # report's citations are <30% primary-source, route back to the
+        # research stage with a primary-source-only retry brief. One
+        # retry per report -- the counter lives on report.state so it
+        # survives the round-trip through research/charts/draft/edit.
+        from api.agents.scout import (
+            PRIMARY_SOURCE_MIN_SHARE,
+            PRIMARY_SOURCE_RETRY_FILENAME,
+            primary_source_only_retry_brief,
+        )
+        from api.citations import primary_source_share
+        ps_sources = _read_sources(wd)
+        n_primary, n_total, ps_share = primary_source_share(ps_sources)
+        retry_count = 0
+        if isinstance(report.state, dict):
+            retry_count = int(report.state.get("primary_source_retry_count", 0) or 0)
+        if n_total > 0 and ps_share < PRIMARY_SOURCE_MIN_SHARE and retry_count < 1:
+            retry_brief = primary_source_only_retry_brief(
+                theme=report.theme,
+                observed_share=ps_share,
+                n_primary=n_primary,
+                n_total=n_total,
+            )
+            _write(wd / PRIMARY_SOURCE_RETRY_FILENAME, retry_brief)
+            log.warning(
+                "audit: primary-source share %.0f%% (%d/%d) below %.0f%% floor "
+                "for report %s -- routing back to research",
+                ps_share * 100, n_primary, n_total,
+                PRIMARY_SOURCE_MIN_SHARE * 100, report.id,
+            )
+            audit("primary_source_gate_failed", {
+                "n_primary": n_primary,
+                "n_total": n_total,
+                "share": ps_share,
+                "threshold": PRIMARY_SOURCE_MIN_SHARE,
+                "retry_count": retry_count + 1,
+            })
+            with Session(engine) as session:
+                r = session.get(Report, report.id)
+                if r:
+                    new_state = dict(r.state) if isinstance(r.state, dict) else {}
+                    new_state["primary_source_retry_count"] = retry_count + 1
+                    r.state = new_state
+                    note = (
+                        f"Audit gate routed back to research: primary-source "
+                        f"share {ps_share * 100:.0f}% ({n_primary}/{n_total}) "
+                        f"below {PRIMARY_SOURCE_MIN_SHARE * 100:.0f}% floor."
+                    )
+                    r.error = (r.error + "\n\n" + note) if r.error else note
+                    session.add(r)
+                    session.commit()
+            return ReportStage.research
+        # On the second pass (or when the share is above the floor), drop
+        # the retry marker so a future re-run from `audit` doesn't see a
+        # stale brief and a future research-stage call doesn't double up.
+        retry_marker = wd / PRIMARY_SOURCE_RETRY_FILENAME
+        if retry_marker.exists():
+            try:
+                retry_marker.unlink()
+            except OSError:
+                pass
+        audit("primary_source_gate_passed", {
+            "n_primary": n_primary,
+            "n_total": n_total,
+            "share": ps_share,
+            "threshold": PRIMARY_SOURCE_MIN_SHARE,
+            "retry_count": retry_count,
+        })
+
         # Two passes here:
         # 1. Strip failure markers leaked from earlier stages (timeouts,
         #    halted iters, tool errors). A reader should never see

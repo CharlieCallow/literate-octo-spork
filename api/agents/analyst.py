@@ -61,7 +61,16 @@ class Analyst(Agent):
         report_id: int | None = None,
         has_uploads: bool = False,
         max_iters: int | None = None,
+        retry_brief: str | None = None,
     ) -> AgentResult:
+        # Lazy import: scout.py imports from analyst.py transitively via
+        # tools, so module-level import would risk a cycle.
+        from api.agents.scout import CITATION_DISCIPLINE_DIRECTIVE
+
+        retry_block = (
+            f"\n\n=== AUDIT-GATE RETRY ===\n\n{retry_brief}\n\n=== END RETRY BRIEF ===\n"
+            if retry_brief else ""
+        )
         upload_note = (
             "\n\nThe user attached research notes / CSVs to this report. "
             "Call `uploaded_documents` with no args first to see what's there, "
@@ -75,7 +84,7 @@ BRIEF:
 
 {brief}
 
-THEME: {theme}{upload_note}
+THEME: {theme}{upload_note}{retry_block}
 
 Run your research. Available tools:
 
@@ -122,6 +131,8 @@ Citation rules (enforced):
 - Never cite a bare homepage like `https://www.federalreserve.gov`, `https://www.opec.org`, `https://finance.yahoo.com`. Generic landing pages are stripped from the Sources list at render time, so they're a wasted citation.
 - For web_search hits, prefer the article / report URL the search returned over the publisher's home page.
 - Use real URLs from your tool results, never invent them.
+
+{CITATION_DISCIPLINE_DIRECTIVE}
 
 Be opinionated; hedging without conviction is the failure mode. Output ~300-500 words.
 """
