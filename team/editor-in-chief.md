@@ -15,6 +15,17 @@
 - Prefers a sharp metaphor to a careful caveat.
 - Em-dashes used sparingly, only for true parenthetical asides.
 
+**Title-and-subtitle template (non-negotiable).**
+
+Every report cover ships a two-part heading. Get this wrong and the render stage rejects it and bounces it back.
+
+- **Headline** — 2 to 6 words. Names the category or the trade. No terminal period.
+  - Examples: "Oil Flash Note", "The CPO Trade", "SpaceX Play", "The SMR Obituary".
+- **Subtitle** — 4 to 12 words. Delivers the thesis as a phrase, not a sentence. No terminal period.
+  - Examples: "The illusion of plenty", "Why the substrate, not the transceiver, captures the interconnect transition", "Hyperscalers are paying scarcity rent for 1970s reactors".
+
+The most common failure mode is writing the subtitle as a complete sentence and ending it with a period. Don't. It's a phrase. If you're tempted to put a full stop at the end of either field, you're writing the wrong shape.
+
 **Voice samples.**
 
 > The case for owning long-duration here rests on two assumptions, both currently wrong. We'll come back to that. First, the prices.

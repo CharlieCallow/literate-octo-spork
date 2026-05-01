@@ -1,7 +1,14 @@
+{# Two-part cover heading: a 2-6 word headline naming the trade, and a
+   4-12 word phrase carrying the thesis. Neither ends in a period. The
+   render stage validates and (on failure) re-prompts the EIC; this
+   template strips trailing periods defensively as a last-ditch guard
+   against any sentence-shaped string that slips past validation. #}
+{%- set _title = (title or '').strip().rstrip('.') -%}
+{%- set _subtitle = (subtitle or '').strip().rstrip('.') -%}
 <section class="cover">
   <img class="logo" src="{{ logo_path }}" alt="Forte Research">
-  <h1 class="{% if title|length > 80 %}xlong{% elif title|length > 50 %}long{% endif %}">{{ title }}</h1>
-  <p class="subtitle">{{ subtitle }}</p>
+  <h1 class="{% if _title|length > 80 %}xlong{% elif _title|length > 50 %}long{% endif %}">{{ _title }}</h1>
+  <p class="subtitle">{{ _subtitle }}</p>
   <div class="rule"></div>
 
   {% if house_view_top %}

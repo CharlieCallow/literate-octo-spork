@@ -1400,18 +1400,51 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
         ]
 
         opts = report.render_options or {}
-        # Cover title cap. The theme often comes in as a 20+ word sentence
-        # ("The operator complex is mispriced against the uranium tape, and
-        # TMI is the SMR obituary written by the buyer"); on a cover that
-        # wraps to four lines and buries the lede. Cap to ~6 words / 50
-        # chars and let the subtitle carry the detail. Already-short themes
-        # pass through untouched.
-        title_full = report.theme.title() if report.theme.islower() else report.theme
-        title_cover = _cover_title(title_full)
+        # Cover title + subtitle: the EIC writes them in the brief under
+        # `# TITLE` / `# SUBTITLE`. Validate against the template (title 2-6
+        # words, subtitle 4-12 words, neither ending in a period); on
+        # rejection, re-prompt the EIC with the rejection reasons. If every
+        # attempt fails, mechanically clean so the render still ships.
+        parsed_brief = parse_brief(brief)
+        brief_title = str(parsed_brief.get("title") or "").strip()
+        brief_subtitle = str(parsed_brief.get("subtitle") or "").strip()
+        # Fallbacks for older briefs without a TITLE field: derive from theme
+        # via the long-standing _cover_title helper, then let validation
+        # re-prompt the EIC if the result still doesn't fit the template.
+        if not brief_title:
+            theme_full = report.theme.title() if report.theme.islower() else report.theme
+            brief_title = _cover_title(theme_full)
+        if not brief_subtitle:
+            brief_subtitle = subtitle or parsed.get("opening", "").split("\n")[0][:120]
+
+        eic_for_retitle = EditorInChief(cost, audit=audit, model=models["editor"])
+
+        def _audit_retitle(res: AgentResult) -> None:
+            assert report.id is not None
+            _record(report.id, wd, res)
+
+        title_cover, cover_subtitle, retitle_log = resolve_cover_title_subtitle(
+            eic=eic_for_retitle,
+            theme=report.theme,
+            title=brief_title,
+            subtitle=brief_subtitle,
+            audit_record=_audit_retitle,
+        )
+        for line in retitle_log:
+            log.warning("cover-title validation: %s", line)
+        # Persist the validated subtitle so the dashboard / email show the
+        # same phrase the cover renders.
+        with Session(engine) as session:
+            r = session.get(Report, report.id)
+            if r and cover_subtitle and r.subtitle != cover_subtitle:
+                r.subtitle = cover_subtitle
+                session.add(r)
+                session.commit()
+
         render_kwargs: dict[str, object] = dict(
             out_path=out,
             title=title_cover,
-            subtitle=subtitle or parsed.get("opening", "").split("\n")[0][:120],
+            subtitle=cover_subtitle,
             date=date.today().isoformat(),
             contributors=contributors_credits,
             sections=cited_sections,
@@ -1454,9 +1487,10 @@ def run_stage(report: Report, stage: ReportStage) -> ReportStage:
                         raw2 = _sections_for_render(parsed2, wd)
                         cited2, _ord2 = attach_inline_citations(raw2, _read_sources(wd))
                         render_kwargs["sections"] = cited2
-                        render_kwargs["subtitle"] = (
-                            subtitle or parsed2.get("opening", "").split("\n")[0][:120]
-                        )
+                        # Preserve the validated cover subtitle from the
+                        # initial render; the stylist pass only restyles
+                        # prose, it does not get to override the cover.
+                        render_kwargs["subtitle"] = cover_subtitle
                         render_kwargs["house_view_top"] = parsed2.get("house_view_top")
                         render_kwargs["house_view_bottom"] = parsed2.get("house_view_bottom")
                         render_kwargs["disagreement"] = parsed2.get("disagreement") or None
@@ -2465,6 +2499,138 @@ def _compute_section_overlap(
 _COVER_TITLE_HOOK_MAX_WORDS = 10
 
 
+_TITLE_MIN_WORDS = 2
+_TITLE_MAX_WORDS = 6
+_SUBTITLE_MIN_WORDS = 4
+_SUBTITLE_MAX_WORDS = 12
+
+
+def _strip_wrapping_quotes(s: str) -> str:
+    s = s.strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ("\"", "'", "“", "”", "‘", "’"):
+        return s[1:-1].strip()
+    return s
+
+
+def _word_count(s: str) -> int:
+    return len(s.split())
+
+
+def validate_title_subtitle(title: str, subtitle: str) -> list[str]:
+    """Enforce the cover-template contract: title 2-6 words, subtitle 4-12
+    words, neither with a terminal period. Returns a list of human-readable
+    rejection reasons -- empty list = passes."""
+    reasons: list[str] = []
+    t = (title or "").strip()
+    s = (subtitle or "").strip()
+    if not t:
+        reasons.append("title is empty")
+    else:
+        tw = _word_count(t)
+        if tw < _TITLE_MIN_WORDS:
+            reasons.append(f"title has {tw} word(s); needs at least {_TITLE_MIN_WORDS}")
+        if tw > _TITLE_MAX_WORDS:
+            reasons.append(f"title has {tw} words; cap is {_TITLE_MAX_WORDS}")
+        if t.endswith("."):
+            reasons.append("title ends with a period; titles must not end with a period")
+    if not s:
+        reasons.append("subtitle is empty")
+    else:
+        sw = _word_count(s)
+        if sw < _SUBTITLE_MIN_WORDS:
+            reasons.append(f"subtitle has {sw} word(s); needs at least {_SUBTITLE_MIN_WORDS}")
+        if sw > _SUBTITLE_MAX_WORDS:
+            reasons.append(f"subtitle has {sw} words; cap is {_SUBTITLE_MAX_WORDS}")
+        if s.endswith("."):
+            reasons.append("subtitle ends with a period; subtitles must be a phrase, not a sentence")
+    return reasons
+
+
+_RETITLE_TITLE_RE = re.compile(r"^# TITLE\s*\n(.+?)(?=\n# |\Z)", re.S | re.M)
+_RETITLE_SUBTITLE_RE = re.compile(r"^# SUBTITLE\s*\n(.+?)(?=\n# |\Z)", re.S | re.M)
+
+
+def _parse_retitle(text: str) -> tuple[str, str]:
+    def first_line(rx: re.Pattern[str]) -> str:
+        m = rx.search(text)
+        if not m:
+            return ""
+        return _strip_wrapping_quotes(m.group(1).strip().splitlines()[0])
+    return first_line(_RETITLE_TITLE_RE), first_line(_RETITLE_SUBTITLE_RE)
+
+
+def _mechanical_clean_title(title: str, subtitle: str) -> tuple[str, str]:
+    """Last-resort fallback when the EIC re-prompts have all failed
+    validation. Strip terminal periods and truncate by word count so the
+    render still produces a conforming cover. Logged loudly upstream."""
+    t = _strip_wrapping_quotes(title).rstrip(".").strip()
+    s = _strip_wrapping_quotes(subtitle).rstrip(".").strip()
+    t_words = t.split()
+    if len(t_words) > _TITLE_MAX_WORDS:
+        t = " ".join(t_words[:_TITLE_MAX_WORDS])
+    s_words = s.split()
+    if len(s_words) > _SUBTITLE_MAX_WORDS:
+        s = " ".join(s_words[:_SUBTITLE_MAX_WORDS])
+    return t, s
+
+
+def resolve_cover_title_subtitle(
+    *,
+    eic: EditorInChief,
+    theme: str,
+    title: str,
+    subtitle: str,
+    audit_record: "Callable[[AgentResult], None] | None" = None,
+    max_attempts: int = 3,
+) -> tuple[str, str, list[str]]:
+    """Validate the cover title + subtitle against the template; on failure,
+    re-prompt the EIC up to ``max_attempts`` times with the rejected output
+    and the validator's reasons. If every attempt fails, mechanically clean
+    the last attempt so the render still ships a conforming cover. Returns
+    ``(title, subtitle, attempt_log)``."""
+    attempt_log: list[str] = []
+    cur_title = _strip_wrapping_quotes(title)
+    cur_subtitle = _strip_wrapping_quotes(subtitle)
+    for attempt in range(max_attempts):
+        reasons = validate_title_subtitle(cur_title, cur_subtitle)
+        if not reasons:
+            return cur_title, cur_subtitle, attempt_log
+        attempt_log.append(
+            f"attempt {attempt + 1}: rejected title={cur_title!r} "
+            f"subtitle={cur_subtitle!r} -- {'; '.join(reasons)}"
+        )
+        try:
+            res = eic.retitle(
+                theme=theme,
+                rejected_title=cur_title,
+                rejected_subtitle=cur_subtitle,
+                reasons=reasons,
+            )
+        except Exception as e:  # noqa: BLE001
+            attempt_log.append(f"attempt {attempt + 1}: retitle call failed -- {e}")
+            break
+        if audit_record is not None:
+            audit_record(res)
+        new_title, new_subtitle = _parse_retitle(res.text or "")
+        if not new_title and not new_subtitle:
+            attempt_log.append(
+                f"attempt {attempt + 1}: retitle response unparseable, aborting"
+            )
+            break
+        cur_title = new_title or cur_title
+        cur_subtitle = new_subtitle or cur_subtitle
+    # Final validation -- if still failing, mechanically clean.
+    final_reasons = validate_title_subtitle(cur_title, cur_subtitle)
+    if final_reasons:
+        cleaned_t, cleaned_s = _mechanical_clean_title(cur_title, cur_subtitle)
+        attempt_log.append(
+            f"all {max_attempts} retitle attempts failed; mechanical-cleaned "
+            f"title={cleaned_t!r} subtitle={cleaned_s!r} (reasons: {'; '.join(final_reasons)})"
+        )
+        cur_title, cur_subtitle = cleaned_t, cleaned_s
+    return cur_title, cur_subtitle, attempt_log
+
+
 def _cover_title(title: str) -> str:
     """Return a cover-friendly headline. Never adds an ellipsis -- the cover
     layout shrinks long titles via CSS rather than truncating them, so the
@@ -2573,9 +2739,11 @@ def parse_brief(text: str) -> dict[str, object]:
                 })
 
     subtitle = (sections.get("SUBTITLE") or "").strip().splitlines()[0].strip() if sections.get("SUBTITLE") else ""
+    title = (sections.get("TITLE") or "").strip().splitlines()[0].strip() if sections.get("TITLE") else ""
 
     return {
         "angle": sections.get("ANGLE", "").strip(),
+        "title": title,
         "subtitle": subtitle,
         "questions": sections.get("QUESTIONS", "").strip(),
         "contributor_slugs": contributor_slugs,
