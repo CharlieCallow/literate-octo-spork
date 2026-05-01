@@ -58,6 +58,8 @@ _No reports yet._
 
 Be specific. A temporary specialist is only useful if their voice is distinct from the standing team. Make them credible -- name a credential, a stint somewhere recognisable, a single tic that makes them memorable.
 
+The voice samples MUST themselves obey Forte's quantified-anchor rule: every substantive sentence in a sample carries a specific number, percentage, ratio, threshold, or dated milestone — never a bare qualitative claim. If you write "the operator complex is mispriced", make it "mispriced by ~6 percentage points YTD". This is the firm's prose discipline; the persona file should model it from day one.
+
 Return ONLY the persona file content. No preamble, no explanation.
 """
         return self.run(prompt, max_tokens=2048)
